@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Nexus Reservas — Tablet</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#0f1115; --card:#1a1d24; --card2:#232732; --line:#2c313c;
+    --txt:#eef1f6; --muted:#9aa3b2; --accent:#3b82f6;
+    --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --purple:#a855f7; --slate:#64748b;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; height:100%;}
+  body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--txt); font-size:17px;}
+  button{font-family:inherit; cursor:pointer; border:none; border-radius:12px; font-size:16px;}
+  input,select,textarea{font-family:inherit; font-size:17px; width:100%; padding:14px; border-radius:12px;
+    border:1px solid var(--line); background:var(--card2); color:var(--txt); outline:none;}
+  .hidden{display:none !important;}
+
+  header{display:flex; align-items:center; gap:12px; padding:12px 16px; background:var(--card);
+    border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; flex-wrap:wrap;}
+  header .casa{font-weight:700; font-size:19px;}
+  header select.casaSel{width:auto; min-width:200px; padding:10px 12px;}
+  .modesw{display:flex; gap:4px; background:var(--card2); padding:4px; border-radius:14px;}
+  .modesw button{background:transparent; color:var(--muted); padding:10px 16px; font-weight:700;}
+  .modesw button.on{background:var(--accent); color:#fff;}
+  .datenav{display:flex; align-items:center; gap:6px; margin-left:auto;}
+  .datenav button{background:var(--card2); color:var(--txt); padding:12px 16px; font-size:20px; min-width:52px;}
+  .datenav .today{font-size:15px; padding:12px 14px;}
+  .datelabel{font-weight:700; min-width:185px; text-align:center; font-size:18px;}
+  .icnbtn{background:var(--card2); color:var(--txt); padding:12px 14px;}
+
+  .occ{display:flex; gap:10px; padding:10px 16px; overflow-x:auto; background:var(--bg); border-bottom:1px solid var(--line);}
+  .occ .amb{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:8px 12px; min-width:150px;}
+  .occ .amb b{font-size:14px;} .occ .amb .n{font-size:13px; color:var(--muted);}
+  .bar{height:7px; background:var(--card2); border-radius:6px; margin-top:6px; overflow:hidden;}
+  .bar > i{display:block; height:100%; background:var(--green);}
+
+  .tabs{display:flex; gap:8px; padding:12px 16px; overflow-x:auto;}
+  .tabs button{background:var(--card); color:var(--muted); padding:12px 16px; white-space:nowrap; border:1px solid var(--line);}
+  .tabs button.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .tabs button .badge{display:inline-block; margin-left:6px; background:rgba(255,255,255,.18); border-radius:10px; padding:1px 8px; font-size:13px;}
+
+  main{padding:8px 16px 120px;}
+  .empty{text-align:center; color:var(--muted); padding:60px 20px;}
+  .rcard{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px 16px; margin-bottom:12px;}
+  .rcard .top{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .rcard .nome{font-size:20px; font-weight:700;}
+  .rcard .hora{margin-left:auto; font-size:22px; font-weight:800;}
+  .rcard .pos{background:var(--card2); border-radius:10px; padding:4px 12px; font-weight:800; font-size:20px;}
+  .rcard .meta{color:var(--muted); margin-top:6px; font-size:15px; line-height:1.5;}
+  .rcard .meta .ppl{color:var(--txt); font-weight:700;}
+  .pill{font-size:13px; font-weight:700; padding:3px 10px; border-radius:20px; color:#fff;}
+  .tag{font-size:12px; padding:2px 8px; border-radius:6px; background:var(--card2); color:var(--muted); margin-right:6px;}
+  .actions{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;}
+  .actions button{flex:1 1 auto; min-width:110px; padding:14px; font-weight:700; color:#fff;}
+  .b-green{background:var(--green);} .b-blue{background:var(--accent);} .b-red{background:var(--red);}
+  .b-amber{background:var(--amber);} .b-slate{background:var(--slate);} .b-purple{background:var(--purple);}
+
+  .fab{position:fixed; right:20px; bottom:20px; background:var(--accent); color:#fff; font-size:18px;
+    font-weight:800; padding:18px 24px; border-radius:30px; box-shadow:0 8px 24px rgba(0,0,0,.45); z-index:6;}
+
+  .overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:flex-start;
+    justify-content:center; padding:20px; z-index:10; overflow:auto;}
+  .modal{background:var(--card); border:1px solid var(--line); border-radius:18px; width:100%; max-width:560px; padding:20px;}
+  .modal h2{margin:0 0 14px;}
+  .field{margin-bottom:12px;} .field label{display:block; font-size:14px; color:var(--muted); margin-bottom:5px;}
+  .row2{display:flex; gap:10px;} .row2 > .field{flex:1;}
+  .toggle{display:flex; align-items:center; gap:10px; background:var(--card2); padding:12px; border-radius:12px;}
+  .toggle input{width:auto;}
+  .modal .foot{display:flex; gap:10px; margin-top:16px;}
+  .modal .foot button{flex:1; padding:16px; font-weight:700;}
+  .b-cancel{background:var(--card2); color:var(--txt);}
+  .err{color:var(--red); font-size:14px; margin-top:8px; min-height:18px;}
+
+  .convrow{display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--line); border-radius:12px; margin-bottom:8px; background:var(--card2);}
+  .convrow .ci{flex:1;} .convrow .ci b{font-size:16px;} .convrow .ci .s{color:var(--muted); font-size:13px;}
+  .convrow .del{background:var(--red); color:#fff; padding:10px 14px; min-width:auto;}
+  .ok-pill{font-size:11px; background:var(--green); color:#fff; padding:2px 8px; border-radius:10px;}
+  .linkbox{display:flex; gap:8px; margin-bottom:14px;}
+  .linkbox button{flex:1; padding:14px; font-weight:700; color:#fff;}
+
+  .setup{max-width:520px; margin:60px auto; padding:28px; background:var(--card); border:1px solid var(--line); border-radius:18px;}
+  .setup h1{margin-top:0;} .setup p, .setup ol{color:var(--muted); line-height:1.6;}
+  .setup button{width:100%; background:var(--accent); color:#fff; padding:16px; font-weight:700; margin-top:8px;}
+</style>
+</head>
+<body>
+
+<!-- ================= SETUP ================= -->
+<div id="setup" class="setup hidden">
+  <h1>Conectar ao Supabase</h1>
+  <p>Cole os 2 dados do seu projeto (Supabase &rarr; <b>Connect</b> &rarr; Framework, ou Project Settings &rarr; API):</p>
+  <div class="field"><label>Project URL</label><input id="suUrl" placeholder="https://xxxx.supabase.co"></div>
+  <div class="field"><label>chave (anon / publishable)</label><input id="suKey" placeholder="sb_publishable_... ou eyJ..."></div>
+  <div class="err" id="setupErr"></div>
+  <button onclick="saveSetup()">Conectar</button>
+</div>
+
+<!-- ================= APP ================= -->
+<div id="app" class="hidden">
+  <header>
+    <span class="casa" id="casaNome">—</span>
+    <select class="casaSel hidden" id="casaSel" onchange="changeCasa()"></select>
+    <div class="modesw">
+      <button id="m_reservas" class="on" onclick="setModo('reservas')">Reservas</button>
+      <button id="m_fila" onclick="setModo('fila')">Fila de Espera</button>
+    </div>
+    <div class="datenav">
+      <button onclick="shiftDate(-1)">‹</button>
+      <span class="datelabel" id="dateLabel">—</span>
+      <button onclick="shiftDate(1)">›</button>
+      <button class="today" onclick="goToday()">Hoje</button>
+      <button class="icnbtn" onclick="loadData()" title="Atualizar">⟳</button>
+      <button class="icnbtn" onclick="location.href='eventos.html'" title="Eventos">🎉 Eventos</button>
+      <button class="icnbtn" onclick="openSetup()" title="Config">⚙</button>
+    </div>
+  </header>
+
+  <!-- RESERVAS VIEW -->
+  <div id="reservasView">
+    <div class="occ" id="occ"></div>
+    <div class="tabs" id="tabs"></div>
+    <main id="list"></main>
+  </div>
+
+  <!-- FILA VIEW -->
+  <div id="filaView" class="hidden">
+    <div class="tabs" id="filaTabs"></div>
+    <main id="filaList"></main>
+  </div>
+
+  <button class="fab" id="fab" onclick="openCreate()">+ Nova Reserva</button>
+</div>
+
+<!-- ============ MODAL: NOVA RESERVA ============ -->
+<div id="formOverlay" class="overlay hidden">
+  <div class="modal">
+    <h2>Nova Reserva</h2>
+    <div class="row2">
+      <div class="field"><label>Nome *</label><input id="f_nome"></div>
+      <div class="field"><label>WhatsApp *</label><input id="f_tel" placeholder="(11) 90000-0000"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Pessoas *</label><input id="f_qtd" type="number" min="1" value="2"></div>
+      <div class="field"><label>Data *</label><input id="f_data" type="date"></div>
+      <div class="field"><label>Hora</label><input id="f_hora" type="time"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Setor / Ambiente *</label><select id="f_ambiente"></select></div>
+      <div class="field"><label>Giro</label><select id="f_giro"></select></div>
+    </div>
+    <div class="field"><label>Ocasião</label>
+      <select id="f_ocasiao">
+        <option value="">—</option>
+        <option>Amigos e Família</option><option>Aniversário</option><option>Curtição</option>
+        <option>Jantar a Dois</option><option>Negócios</option><option>Relaxar</option><option>Outros</option>
+      </select>
+    </div>
+    <div class="row2">
+      <div class="field"><label>CPF</label><input id="f_cpf"></div>
+      <div class="field"><label>Nascimento</label><input id="f_nasc" type="date"></div>
+    </div>
+    <div class="field"><label>E-mail</label><input id="f_email"></div>
+    <div class="field"><label>Observação</label><textarea id="f_obs" rows="2"></textarea></div>
+    <div class="field"><div class="toggle"><input type="checkbox" id="f_passante"><label style="margin:0;">Reserva passante (cliente chegou sem reserva)</label></div></div>
+    <div class="err" id="formErr"></div>
+    <div class="foot">
+      <button class="b-cancel" onclick="closeForm()">Cancelar</button>
+      <button class="b-blue" style="color:#fff;" onclick="saveReserva()">Salvar reserva</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: ADD FILA ============ -->
+<div id="filaOverlay" class="overlay hidden">
+  <div class="modal">
+    <h2>Adicionar à Fila de Espera</h2>
+    <div class="row2">
+      <div class="field"><label>Nome *</label><input id="q_nome"></div>
+      <div class="field"><label>WhatsApp *</label><input id="q_tel"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Pessoas *</label><input id="q_qtd" type="number" min="1" value="2"></div>
+      <div class="field"><label>Comanda</label><input id="q_comanda"></div>
+    </div>
+    <div class="field"><label>Setor (opcional)</label><select id="q_ambiente"></select></div>
+    <div class="field"><label>Observação</label><textarea id="q_info" rows="2"></textarea></div>
+    <div class="field"><div class="toggle"><input type="checkbox" id="q_prio"><label style="margin:0;">Prioridade na fila</label></div></div>
+    <div class="err" id="filaErr"></div>
+    <div class="foot">
+      <button class="b-cancel" onclick="closeFila()">Cancelar</button>
+      <button class="b-blue" style="color:#fff;" onclick="saveFila()">Adicionar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: CONVIDADOS ============ -->
+<div id="convOverlay" class="overlay hidden">
+  <div class="modal">
+    <h2 id="convTitle">Convidados</h2>
+    <div id="convProg" style="color:var(--muted); margin-bottom:14px;"></div>
+    <div class="linkbox">
+      <button class="b-blue" onclick="openConvite(convReserva?convReserva.token:'')">Abrir link do convidado</button>
+      <button class="b-slate" onclick="copyConvite()">Copiar link</button>
+    </div>
+    <div class="row2">
+      <div class="field"><input id="cv_nome" placeholder="Nome do convidado"></div>
+      <div class="field"><input id="cv_tel" placeholder="WhatsApp"></div>
+      <button class="b-green" style="color:#fff; padding:0 18px; margin-bottom:12px; border-radius:12px;" onclick="addConvManual()">+</button>
+    </div>
+    <div id="convList"></div>
+    <div class="err" id="convErr"></div>
+    <div class="foot"><button class="b-cancel" onclick="closeConv()">Fechar</button></div>
+  </div>
+</div>
+
+<script>
+// ===================== Estado =====================
+let sb=null, casas=[], casaAtual=null, ambientes=[], giros=[], dataSel=isoToday();
+let modo='reservas', reservas=[], convCount={}, fila=[], tabAtual='dia', filaTab='aguardando';
+let convReserva=null;
+
+const STATUS_TABS=[
+  {key:'dia',      label:'Reservas do Dia', match:['pendente','confirmada']},
+  {key:'checkin',  label:'Check-in',        match:['checkin']},
+  {key:'concluido',label:'Concluído',       match:['concluido']},
+  {key:'no_show',  label:'No Show',         match:['no_show']},
+  {key:'cancelado',label:'Cancelado',       match:['cancelado']},
+  {key:'passante', label:'Passante',        match:null},
+];
+const STATUS_PILL={pendente:['#64748b','Pendente'],confirmada:['#22c55e','Confirmada'],
+  checkin:['#3b82f6','Sentou'],concluido:['#a855f7','Concluído'],no_show:['#ef4444','No-Show'],cancelado:['#475569','Cancelado']};
+const FILA_TABS=[
+  {key:'aguardando',label:'Aguardando',match:['aguardando','chamado']},
+  {key:'sentado',   label:'Sentou',    match:['sentado']},
+  {key:'cancelado', label:'Saiu',      match:['desistiu','cancelado']},
+];
+const FILA_PILL={aguardando:['#f59e0b','Aguardando'],chamado:['#3b82f6','Chamado'],sentado:['#22c55e','Sentou'],desistiu:['#475569','Desistiu'],cancelado:['#475569','Cancelado']};
+
+// ===================== Init =====================
+window.addEventListener('DOMContentLoaded', init);
+// defaults p/ teste (Danilo troca pelos dados do servidor dele)
+const SB_URL_DEFAULT='https://kuyhkltbwlkvtgbabscv.supabase.co';
+const SB_KEY_DEFAULT='sb_publishable_dW-JZ00n74dSLCrznBJ6gw_K8AE1VIq';
+async function init(){
+  const url=localStorage.getItem('sb_url')||SB_URL_DEFAULT, key=localStorage.getItem('sb_key')||SB_KEY_DEFAULT;
+  if(!url||!key){ show('setup'); return; }
+  connect(url,key);
+}
+function connect(url,key){
+  try{ sb=window.supabase.createClient(url,key); show('app'); bootstrap(); }
+  catch(e){ show('setup'); setText('setupErr','Erro: '+e.message); }
+}
+async function bootstrap(){
+  const {data,error}=await sb.from('casas').select('*').eq('ativo',true).order('nome');
+  if(error){ alert('Erro ao ler casas: '+error.message+'\n\nJá rodou o SQL no Supabase?'); return; }
+  casas=data||[];
+  if(!casas.length){ alert('Nenhuma casa. Rode o SQL com o SEED no Supabase.'); return; }
+  casaAtual=casas[0];
+  const sel=document.getElementById('casaSel');
+  if(casas.length>1){ sel.classList.remove('hidden'); sel.innerHTML=casas.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join(''); }
+  document.getElementById('casaNome').textContent=casaAtual.nome;
+  await loadConfig();
+  goToday();
+}
+async function loadConfig(){
+  const [a,g]=await Promise.all([
+    sb.from('ambientes').select('*').eq('casa_id',casaAtual.id).eq('ativo',true).order('ordem'),
+    sb.from('giros').select('*').eq('casa_id',casaAtual.id).eq('ativo',true).order('horario_min'),
+  ]);
+  ambientes=a.data||[]; giros=g.data||[];
+}
+function changeCasa(){
+  casaAtual=casas.find(c=>c.id===document.getElementById('casaSel').value);
+  document.getElementById('casaNome').textContent=casaAtual.nome;
+  loadConfig().then(loadData);
+}
+
+// ===================== Modo =====================
+function setModo(m){
+  modo=m;
+  document.getElementById('m_reservas').classList.toggle('on',m==='reservas');
+  document.getElementById('m_fila').classList.toggle('on',m==='fila');
+  document.getElementById('reservasView').classList.toggle('hidden',m!=='reservas');
+  document.getElementById('filaView').classList.toggle('hidden',m!=='fila');
+  document.getElementById('fab').textContent = m==='reservas'?'+ Nova Reserva':'+ Adicionar à fila';
+  loadData();
+}
+function openCreate(){ modo==='reservas'?openForm():openFila(); }
+function loadData(){ modo==='reservas'?loadReservas():loadFila(); }
+
+// ===================== Datas =====================
+function isoToday(){ return ymd(new Date()); }
+function ymd(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function shiftDate(n){ const d=new Date(dataSel+'T12:00:00'); d.setDate(d.getDate()+n); dataSel=ymd(d); refreshDateLabel(); loadData(); }
+function goToday(){ dataSel=isoToday(); refreshDateLabel(); loadData(); }
+function refreshDateLabel(){
+  const d=new Date(dataSel+'T12:00:00'); const dias=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  document.getElementById('dateLabel').textContent=`${dias[d.getDay()]} ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
+// ===================== RESERVAS =====================
+async function loadReservas(){
+  if(!casaAtual) return;
+  const {data,error}=await sb.from('reservas').select('*')
+    .eq('casa_id',casaAtual.id).eq('data',dataSel)
+    .order('hora',{ascending:true,nullsFirst:true}).order('created_at');
+  if(error){ alert('Erro ao ler reservas: '+error.message); return; }
+  reservas=data||[];
+  await loadConvidados();
+  renderTabs(); renderOcc(); renderList();
+}
+async function loadConvidados(){
+  convCount={}; const ids=reservas.map(r=>r.id); if(!ids.length) return;
+  const {data}=await sb.from('convidados').select('reserva_id').in('reserva_id',ids).eq('confirmado',true);
+  (data||[]).forEach(c=>{ convCount[c.reserva_id]=(convCount[c.reserva_id]||0)+1; });
+}
+function renderTabs(){
+  document.getElementById('tabs').innerHTML=STATUS_TABS.map(t=>{
+    const n=reservas.filter(r=>tabMatch(t,r)).length;
+    return `<button class="${t.key===tabAtual?'active':''}" onclick="setTab('${t.key}')">${t.label}<span class="badge">${n}</span></button>`;
+  }).join('');
+}
+function tabMatch(t,r){ return t.key==='passante' ? (r.passante && r.status!=='cancelado') : t.match.includes(r.status); }
+function setTab(k){ tabAtual=k; renderTabs(); renderList(); }
+function renderOcc(){
+  const ativas=reservas.filter(r=>['pendente','confirmada','checkin','concluido'].includes(r.status));
+  document.getElementById('occ').innerHTML=ambientes.map(a=>{
+    const pax=ativas.filter(r=>r.ambiente_id===a.id).reduce((s,r)=>s+(r.qtd_pessoas||0),0);
+    const pct=a.limite_pessoas?Math.min(100,Math.round(pax/a.limite_pessoas*100)):0;
+    const col=pct>=100?'var(--red)':pct>=80?'var(--amber)':'var(--green)';
+    return `<div class="amb"><b>${esc(a.nome)}</b><div class="n">${pax}/${a.limite_pessoas} pessoas</div>
+      <div class="bar"><i style="width:${pct}%;background:${col}"></i></div></div>`;
+  }).join('') || '<div class="amb"><span class="n">Sem ambientes</span></div>';
+}
+function renderList(){
+  const t=STATUS_TABS.find(x=>x.key===tabAtual);
+  const arr=reservas.filter(r=>tabMatch(t,r));
+  const el=document.getElementById('list');
+  if(!arr.length){ el.innerHTML=`<div class="empty">Nenhuma reserva em "${t.label}" neste dia.</div>`; return; }
+  el.innerHTML=arr.map(card).join('');
+}
+function card(r){
+  const amb=ambientes.find(a=>a.id===r.ambiente_id);
+  const [col,lbl]=STATUS_PILL[r.status]||['#64748b',r.status];
+  const hora=r.hora?r.hora.slice(0,5):'—';
+  const conf=1+(convCount[r.id]||0), meta=r.confirmacoes_necessarias||r.qtd_pessoas;
+  return `<div class="rcard">
+    <div class="top">
+      <span class="nome">${esc(r.nome)}</span>
+      <span class="pill" style="background:${col}">${lbl}</span>
+      ${r.passante?'<span class="tag">PASSANTE</span>':''}
+      <span class="hora">${hora}</span>
+    </div>
+    <div class="meta">
+      <span class="ppl">${r.qtd_pessoas} pessoas</span> · ${amb?esc(amb.nome):'sem setor'}${r.ocasiao?' · '+esc(r.ocasiao):''}<br>
+      📱 ${esc(r.telefone||'—')}${r.cpf?' · CPF '+esc(r.cpf):''}${r.email?' · ✉️ '+esc(r.email):''}${r.data_nascimento?' · 🎂 '+esc(r.data_nascimento):''}${r.observacao?'<br>📝 '+esc(r.observacao):''}<br>
+      ${r.mesa_numero?'🪑 <b>Mesa '+esc(r.mesa_numero)+'</b> · EPOC: '+(r.epoc_status||'—')+'<br>':''}
+      ✅ <b>${conf}/${meta}</b> confirmados
+    </div>
+    <div class="actions">${actions(r)}
+      <button class="b-slate" onclick='openConv(${JSON.stringify(r.id)})'>Convidados</button>
+      <button class="b-slate" onclick="transferir('${r.id}')">↔ Transferir</button>
+    </div>
+  </div>`;
+}
+function actions(r){
+  const A=(cls,fn,lbl)=>`<button class="${cls}" onclick="setStatus('${r.id}','${fn}')">${lbl}</button>`;
+  const M=`<button class="b-green" onclick="openMesa('${r.id}')">${r.mesa_numero?'Mesa '+esc(r.mesa_numero)+' ✎':'Abrir mesa'}</button>`;
+  if(r.status==='pendente')   return A('b-blue','confirmada','Confirmar')+A('b-purple','checkin','Check-in')+A('b-amber','no_show','No-show')+A('b-red','cancelado','Cancelar');
+  if(r.status==='confirmada') return A('b-purple','checkin','Check-in')+M+A('b-amber','no_show','No-show')+A('b-red','cancelado','Cancelar');
+  if(r.status==='checkin')    return M+A('b-purple','concluido','Concluir')+A('b-amber','no_show','No-show');
+  return A('b-slate','pendente','Reabrir');
+}
+async function openMesa(id){
+  const r=reservas.find(x=>x.id===id);
+  const num=prompt('Número da mesa para '+r.nome+':', r.mesa_numero||'');
+  if(num===null) return;
+  const now=new Date().toISOString();
+  const patch={mesa_numero:num.trim()||null, mesa_aberta_em:now, epoc_status:'pendente'};
+  if(r.status!=='checkin'){ patch.status='checkin'; patch.checkin_em=now; }
+  const {error}=await sb.from('reservas').update(patch).eq('id',id);
+  if(error){ alert('Erro: '+error.message); return; }
+  loadReservas();
+}
+async function transferir(id){
+  const r=reservas.find(x=>x.id===id);
+  const outras=casas.filter(c=>c.id!==casaAtual.id);
+  if(!outras.length){ alert('Só há uma casa cadastrada.'); return; }
+  const lista=outras.map((c,i)=>`${i+1}) ${c.nome}`).join('\n');
+  const escolha=prompt(`Transferir a reserva de ${r.nome} para qual casa?\n\n${lista}\n\nDigite o número:`);
+  if(!escolha) return;
+  const idx=parseInt(escolha,10)-1;
+  if(isNaN(idx)||idx<0||idx>=outras.length){ alert('Opção inválida.'); return; }
+  const destino=outras[idx];
+  if(!confirm(`Transferir para "${destino.nome}"?\n\n⚠️ O setor será apagado — reatribua um setor na casa de destino (os setores são diferentes em cada casa).`)) return;
+  const {error}=await sb.from('reservas').update({casa_id:destino.id, ambiente_id:null, giro_id:null}).eq('id',id);
+  if(error){ alert('Erro: '+error.message); return; }
+  alert(`Reserva transferida para ${destino.nome}. Troque pra essa casa no topo e reatribua o setor.`);
+  loadReservas();
+}
+async function setStatus(id,st){
+  const patch={status:st}, now=new Date().toISOString();
+  if(st==='confirmada') patch.confirmada_em=now;
+  if(st==='checkin')    patch.checkin_em=now;
+  if(st==='cancelado')  patch.cancelado_em=now;
+  const {error}=await sb.from('reservas').update(patch).eq('id',id);
+  if(error){ alert('Erro: '+error.message); return; }
+  loadReservas();
+}
+
+// ===================== NOVA RESERVA =====================
+function openForm(){
+  document.getElementById('f_ambiente').innerHTML=ambientes.map(a=>`<option value="${a.id}">${esc(a.nome)}</option>`).join('');
+  document.getElementById('f_giro').innerHTML='<option value="">—</option>'+giros.map(g=>`<option value="${g.id}">${g.nome||''} ${g.horario_min.slice(0,5)}-${g.horario_max.slice(0,5)}</option>`).join('');
+  document.getElementById('f_data').value=dataSel;
+  ['f_nome','f_tel','f_hora','f_cpf','f_nasc','f_email','f_obs'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('f_qtd').value='2'; document.getElementById('f_passante').checked=false; setText('formErr','');
+  show2('formOverlay',true);
+}
+function closeForm(){ show2('formOverlay',false); }
+async function saveReserva(){
+  const nome=val('f_nome').trim(), tel=val('f_tel').trim();
+  if(!nome||!tel){ setText('formErr','Nome e WhatsApp são obrigatórios.'); return; }
+  const amb=val('f_ambiente'); if(!amb){ setText('formErr','Selecione um setor.'); return; }
+  const qtd=parseInt(val('f_qtd')||'1',10);
+  const cliente={casa_id:casaAtual.id, nome, telefone:tel, email:val('f_email')||null, cpf:val('f_cpf')||null, data_nascimento:val('f_nasc')||null};
+  const up=await sb.from('clientes').upsert(cliente,{onConflict:'casa_id,telefone'}).select('id').single();
+  const reserva={ casa_id:casaAtual.id, cliente_id:up.data?up.data.id:null, nome, telefone:tel,
+    email:val('f_email')||null, cpf:val('f_cpf')||null, data_nascimento:val('f_nasc')||null,
+    data:val('f_data'), hora:val('f_hora')||null, giro_id:val('f_giro')||null, ambiente_id:amb,
+    qtd_pessoas:qtd, confirmacoes_necessarias:qtd, ocasiao:val('f_ocasiao')||null, origem:'painel',
+    observacao:val('f_obs')||null, passante:document.getElementById('f_passante').checked,
+    status:document.getElementById('f_passante').checked?'checkin':'confirmada' };
+  if(reserva.status==='checkin') reserva.checkin_em=new Date().toISOString();
+  const {error}=await sb.from('reservas').insert(reserva);
+  if(error){ setText('formErr','Erro: '+error.message); return; }
+  closeForm(); loadReservas();
+}
+
+// ===================== CONVIDADOS =====================
+async function openConv(id){
+  convReserva=reservas.find(r=>r.id===id);
+  document.getElementById('convTitle').textContent='Convidados — '+convReserva.nome;
+  ['cv_nome','cv_tel'].forEach(i=>document.getElementById(i).value=''); setText('convErr','');
+  show2('convOverlay',true);
+  await renderConv();
+}
+async function renderConv(){
+  const {data}=await sb.from('convidados').select('*').eq('reserva_id',convReserva.id).order('confirmado_em');
+  const list=data||[];
+  const conf=1+list.filter(c=>c.confirmado).length, meta=convReserva.confirmacoes_necessarias||convReserva.qtd_pessoas;
+  document.getElementById('convProg').innerHTML=`✅ <b style="color:var(--txt)">${conf}/${meta}</b> confirmados (o anfitrião conta como 1)`;
+  const host=`<div class="convrow"><div class="ci"><b>${esc(convReserva.nome)}</b> <span class="ok-pill">ANFITRIÃO</span><div class="s">📱 ${esc(convReserva.telefone||'')}</div></div></div>`;
+  const rows=list.map(c=>`<div class="convrow"><div class="ci"><b>${esc(c.nome)}</b> ${c.consent?'<span class="ok-pill">AUTORIZOU</span>':''}
+    <div class="s">📱 ${esc(c.telefone||'—')}${c.cpf?' · CPF '+esc(c.cpf):''}${c.email?' · '+esc(c.email):''}</div></div>
+    <button class="del" onclick="removeConv('${c.id}')">Remover</button></div>`).join('');
+  document.getElementById('convList').innerHTML=host+(rows||'<div class="s" style="color:var(--muted)">Nenhum convidado confirmou ainda.</div>');
+}
+async function addConvManual(){
+  const nome=val('cv_nome').trim(), tel=val('cv_tel').trim();
+  if(!nome){ setText('convErr','Informe o nome.'); return; }
+  const {error}=await sb.from('convidados').insert({reserva_id:convReserva.id, casa_id:casaAtual.id, nome, telefone:tel||null, confirmado:true, confirmado_em:new Date().toISOString(), origem:'manual'});
+  if(error){ setText('convErr','Erro: '+error.message); return; }
+  document.getElementById('cv_nome').value=''; document.getElementById('cv_tel').value='';
+  await renderConv(); loadConvidados().then(renderList);
+}
+async function removeConv(id){
+  await sb.from('convidados').delete().eq('id',id);
+  await renderConv(); loadConvidados().then(renderList);
+}
+function closeConv(){ show2('convOverlay',false); }
+function openConvite(token){ if(!token){alert('Reserva sem link.');return;} window.open('confirmar.html?t='+encodeURIComponent(token),'_blank'); }
+function copyConvite(){
+  const link=location.href.replace(/tablet\.html.*/,'confirmar.html')+'?t='+(convReserva?convReserva.token:'');
+  navigator.clipboard.writeText(link).then(()=>setText('convErr','Link copiado! (funciona quando a página estiver publicada)'));
+}
+
+// ===================== FILA DE ESPERA =====================
+async function loadFila(){
+  if(!casaAtual) return;
+  const {data,error}=await sb.from('fila_espera').select('*')
+    .eq('casa_id',casaAtual.id).eq('data',dataSel)
+    .order('prioridade',{ascending:false}).order('entrou_em');
+  if(error){ alert('Erro ao ler fila: '+error.message); return; }
+  fila=data||[]; renderFilaTabs(); renderFila();
+}
+function renderFilaTabs(){
+  document.getElementById('filaTabs').innerHTML=FILA_TABS.map(t=>{
+    const n=fila.filter(f=>t.match.includes(f.status)).length;
+    return `<button class="${t.key===filaTab?'active':''}" onclick="setFilaTab('${t.key}')">${t.label}<span class="badge">${n}</span></button>`;
+  }).join('');
+}
+function setFilaTab(k){ filaTab=k; renderFilaTabs(); renderFila(); }
+function renderFila(){
+  const t=FILA_TABS.find(x=>x.key===filaTab);
+  const arr=fila.filter(f=>t.match.includes(f.status));
+  const el=document.getElementById('filaList');
+  if(!arr.length){ el.innerHTML=`<div class="empty">Ninguém em "${t.label}" neste dia.</div>`; return; }
+  let pos=0;
+  el.innerHTML=arr.map(f=>{
+    const [col,lbl]=FILA_PILL[f.status]||['#64748b',f.status];
+    if(f.status==='aguardando'||f.status==='chamado') pos++;
+    const tempo=tempoDecorrido(f.entrou_em);
+    return `<div class="rcard">
+      <div class="top">
+        ${(f.status==='aguardando'||f.status==='chamado')?`<span class="pos">${pos}º</span>`:''}
+        <span class="nome">${esc(f.nome)}</span>
+        <span class="pill" style="background:${col}">${lbl}</span>
+        ${f.prioridade?'<span class="tag">PRIORIDADE</span>':''}
+        <span class="hora">${f.qtd_pessoas}p</span>
+      </div>
+      <div class="meta">📱 ${esc(f.telefone||'—')}${f.comanda?' · Comanda '+esc(f.comanda):''} · ⏱ ${tempo}${f.informacoes?'<br>📝 '+esc(f.informacoes):''}</div>
+      <div class="actions">${filaActions(f)}</div>
+    </div>`;
+  }).join('');
+}
+function filaActions(f){
+  const A=(cls,st,lbl)=>`<button class="${cls}" onclick="setFila('${f.id}','${st}')">${lbl}</button>`;
+  if(f.status==='aguardando') return A('b-blue','chamado','Chamar')+A('b-green','sentado','Sentou')+A('b-red','desistiu','Desistiu');
+  if(f.status==='chamado')    return A('b-green','sentado','Sentou')+A('b-red','desistiu','Desistiu');
+  return A('b-slate','aguardando','Voltar p/ fila');
+}
+async function setFila(id,st){
+  const patch={status:st}, now=new Date().toISOString();
+  if(st==='chamado') patch.chamado_em=now;
+  if(st==='sentado') patch.sentou_em=now;
+  const {error}=await sb.from('fila_espera').update(patch).eq('id',id);
+  if(error){ alert('Erro: '+error.message); return; }
+  loadFila();
+}
+function openFila(){
+  document.getElementById('q_ambiente').innerHTML='<option value="">—</option>'+ambientes.map(a=>`<option value="${a.id}">${esc(a.nome)}</option>`).join('');
+  ['q_nome','q_tel','q_comanda','q_info'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('q_qtd').value='2'; document.getElementById('q_prio').checked=false; setText('filaErr','');
+  show2('filaOverlay',true);
+}
+function closeFila(){ show2('filaOverlay',false); }
+async function saveFila(){
+  const nome=val('q_nome').trim(), tel=val('q_tel').trim();
+  if(!nome||!tel){ setText('filaErr','Nome e WhatsApp são obrigatórios.'); return; }
+  const reg={casa_id:casaAtual.id, nome, telefone:tel, qtd_pessoas:parseInt(val('q_qtd')||'1',10),
+    comanda:val('q_comanda')||null, ambiente_id:val('q_ambiente')||null, informacoes:val('q_info')||null,
+    prioridade:document.getElementById('q_prio').checked, status:'aguardando', data:dataSel};
+  const {error}=await sb.from('fila_espera').insert(reg);
+  if(error){ setText('filaErr','Erro: '+error.message); return; }
+  closeFila(); loadFila();
+}
+
+// ===================== Setup / Util =====================
+function saveSetup(){
+  const u=val('suUrl').trim().replace(/\/$/,''), k=val('suKey').trim();
+  if(!u||!k){ setText('setupErr','Preencha os dois campos.'); return; }
+  localStorage.setItem('sb_url',u); localStorage.setItem('sb_key',k); connect(u,k);
+}
+function openSetup(){ document.getElementById('suUrl').value=localStorage.getItem('sb_url')||''; document.getElementById('suKey').value=localStorage.getItem('sb_key')||''; show('setup'); }
+function tempoDecorrido(iso){ if(!iso) return '—'; const min=Math.max(0,Math.round((Date.now()-new Date(iso).getTime())/60000)); return min<60?min+'min':Math.floor(min/60)+'h'+String(min%60).padStart(2,'0'); }
+function show(which){ document.getElementById('setup').classList.toggle('hidden',which!=='setup'); document.getElementById('app').classList.toggle('hidden',which!=='app'); }
+function show2(id,on){ document.getElementById(id).classList.toggle('hidden',!on); }
+function val(id){ return document.getElementById(id).value; }
+function setText(id,t){ document.getElementById(id).textContent=t; }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+</script>
+</body>
+</html>

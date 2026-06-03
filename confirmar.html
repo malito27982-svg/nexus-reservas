@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confirmar presença</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--bg:#0f1115;--card:#1a1d24;--card2:#232732;--line:#2c313c;--txt:#eef1f6;--muted:#9aa3b2;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--txt);font-size:17px;}
+  .wrap{max-width:480px;margin:0 auto;padding:18px;}
+  input{font-family:inherit;font-size:17px;width:100%;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:var(--txt);outline:none;}
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:12px;font-size:17px;}
+  .hidden{display:none!important;}
+  .hero{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:16px;text-align:center;}
+  .hero img{max-width:100%;border-radius:12px;margin-bottom:12px;}
+  .hero h1{font-size:20px;margin:6px 0;}
+  .hero .sub{color:var(--muted);line-height:1.6;}
+  .prog{background:var(--card2);border-radius:12px;padding:10px 14px;margin-top:12px;font-weight:700;}
+  .field{margin-bottom:12px;} .field label{display:block;font-size:14px;color:var(--muted);margin-bottom:5px;}
+  .row2{display:flex;gap:10px;} .row2>.field{flex:1;}
+  .note{font-size:13px;color:var(--muted);margin-top:-6px;margin-bottom:10px;}
+  .consent{display:flex;gap:12px;align-items:flex-start;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:14px 0;}
+  .consent input{width:24px;height:24px;margin-top:2px;}
+  .consent label{font-size:14px;color:var(--muted);line-height:1.5;}
+  .btn{width:100%;background:var(--green);color:#fff;padding:18px;font-weight:800;font-size:18px;}
+  .err{color:var(--red);font-size:14px;margin:8px 0;min-height:18px;}
+  .ok{text-align:center;padding:40px 10px;}
+  .ok .big{font-size:56px;} .ok h1{margin:10px 0;}
+  .filled{outline:2px solid var(--green);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="loading" class="hero"><div class="sub">Carregando convite...</div></div>
+
+  <!-- ===== Convite + Form ===== -->
+  <div id="content" class="hidden">
+    <div class="hero">
+      <img id="flyer" class="hidden">
+      <h1 id="titulo">Você foi convidado!</h1>
+      <div class="sub" id="detalhes"></div>
+      <div class="prog" id="prog"></div>
+    </div>
+
+    <div class="consent" style="margin-top:0">
+      <input type="checkbox" id="menor" onchange="toggleMenor()">
+      <label for="menor">É menor de 16 anos — confirma só com o nome.</label>
+    </div>
+
+    <div class="field"><label>Nome completo *</label><input id="nome"></div>
+    <div class="field" id="fieldTel"><label>WhatsApp *</label><input id="tel" placeholder="(11) 90000-0000"></div>
+    <div class="note" id="noteCrm">Já é cliente da casa? Preencha CPF, e-mail ou WhatsApp que o resto preenche sozinho.</div>
+    <div class="row2" id="rowDocs">
+      <div class="field"><label>CPF</label><input id="cpf"></div>
+      <div class="field"><label>Nascimento</label><input id="nasc" type="date"></div>
+    </div>
+    <div class="field" id="fieldEmail"><label>E-mail</label><input id="email"></div>
+
+    <div class="consent" id="consentBox">
+      <input type="checkbox" id="consent">
+      <label for="consent">Autorizo o <b id="casaConsent">estabelecimento</b> a guardar meus dados e a me enviar mensagens (WhatsApp/e-mail) sobre esta e futuras reservas.</label>
+    </div>
+
+    <div class="err" id="err"></div>
+    <button class="btn" onclick="confirmar()">Confirmar minha presença</button>
+  </div>
+
+  <!-- ===== Sucesso ===== -->
+  <div id="success" class="hidden ok">
+    <div class="big">✅</div>
+    <h1>Presença confirmada!</h1>
+    <div class="sub" id="successMsg"></div>
+  </div>
+
+  <!-- ===== Erro de config ===== -->
+  <div id="cfgerr" class="hidden hero">
+    <div class="sub">Não foi possível conectar. Abra esta página a partir do tablet/painel ou peça o link atualizado.</div>
+  </div>
+</div>
+
+<script>
+// ===== CONFIG (opcional) =====
+// Pra publicar a pagina pros convidados de verdade, cole aqui sua URL e a chave anon do Supabase.
+// No seu PC de teste, se ja usou o tablet neste navegador, ele pega sozinho do navegador.
+const CONFIG = { url:'https://kuyhkltbwlkvtgbabscv.supabase.co', key:'sb_publishable_dW-JZ00n74dSLCrznBJ6gw_K8AE1VIq' };
+
+let sb=null, reserva=null, casaId=null;
+
+window.addEventListener('DOMContentLoaded', init);
+async function init(){
+  const url = CONFIG.url || localStorage.getItem('sb_url');
+  const key = CONFIG.key || localStorage.getItem('sb_key');
+  const token = new URLSearchParams(location.search).get('t');
+  if(!url||!key){ show('cfgerr'); return; }
+  if(!token){ document.getElementById('loading').innerHTML='<div class="sub">Link inválido (sem código).</div>'; return; }
+  sb = window.supabase.createClient(url,key);
+
+  const {data,error} = await sb.from('reservas')
+    .select('id,nome,data,hora,qtd_pessoas,confirmacoes_necessarias,flyer_url,casa_id,casas(nome,endereco),ambientes(nome)')
+    .eq('token',token).maybeSingle();
+  if(error||!data){ document.getElementById('loading').innerHTML='<div class="sub">Convite não encontrado.</div>'; return; }
+  reserva=data; casaId=data.casa_id;
+  renderHero();
+  show('content');
+}
+
+function renderHero(){
+  const r=reserva;
+  const casa=r.casas?r.casas.nome:'';
+  const amb=r.ambientes?r.ambientes.nome:'';
+  document.getElementById('titulo').textContent = `Reserva de ${r.nome}`;
+  const d=new Date(r.data+'T12:00:00');
+  const dias=['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+  const dataFmt=`${dias[d.getDay()]}, ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+  document.getElementById('detalhes').innerHTML =
+    `${casa}<br>${dataFmt}${r.hora?' às '+r.hora.slice(0,5):''}${amb?'<br>Setor: '+amb:''}`;
+  document.getElementById('casaConsent').textContent = casa;
+  if(r.flyer_url){ const f=document.getElementById('flyer'); f.src=r.flyer_url; f.classList.remove('hidden'); }
+  refreshProg();
+}
+async function refreshProg(){
+  const {count}=await sb.from('convidados').select('id',{count:'exact',head:true})
+    .eq('reserva_id',reserva.id).eq('confirmado',true);
+  const conf = 1 + (count||0); // +1 = o anfitriao
+  const meta = reserva.confirmacoes_necessarias || reserva.qtd_pessoas;
+  document.getElementById('prog').innerHTML =
+    `✅ ${conf} de ${meta} confirmados<br><span style="font-weight:400;color:var(--muted);font-size:14px">Todos precisam confirmar pra reserva valer.</span>`;
+}
+
+// ===== Autofill via CRM =====
+['cpf','email','tel'].forEach(id=>{
+  document.addEventListener('DOMContentLoaded',()=>{
+    const el=document.getElementById(id);
+    if(el) el.addEventListener('blur',()=>autofill(id));
+  });
+});
+async function autofill(byField){
+  const map={cpf:'cpf',email:'email',tel:'telefone'};
+  const v=val(byField).trim(); if(!v) return;
+  const {data}=await sb.from('clientes').select('*').eq('casa_id',casaId).eq(map[byField],v).maybeSingle();
+  if(!data) return;
+  fillIfEmpty('nome',data.nome); fillIfEmpty('tel',data.telefone);
+  fillIfEmpty('cpf',data.cpf); fillIfEmpty('email',data.email); fillIfEmpty('nasc',data.data_nascimento);
+}
+function fillIfEmpty(id,v){ const el=document.getElementById(id); if(el && !el.value && v){ el.value=v; el.classList.add('filled'); } }
+
+// ===== Menor de 18 =====
+function toggleMenor(){
+  const m=document.getElementById('menor').checked;
+  ['fieldTel','noteCrm','rowDocs','fieldEmail','consentBox'].forEach(id=>document.getElementById(id).classList.toggle('hidden',m));
+}
+
+// ===== Confirmar =====
+async function confirmar(){
+  const menor=document.getElementById('menor').checked;
+  const nome=val('nome').trim();
+  if(!nome){ setText('err','Preencha o nome.'); return; }
+
+  // --- menor de 18: so o nome ---
+  if(menor){
+    const now2=new Date().toISOString();
+    const {error}=await sb.from('convidados').insert({reserva_id:reserva.id, casa_id:casaId, nome,
+      menor:true, confirmado:true, confirmado_em:now2, consent:false, origem:'link'});
+    if(error){ setText('err','Erro: '+error.message); return; }
+    return finalizar();
+  }
+
+  const tel=val('tel').trim();
+  if(!tel){ setText('err','Preencha o WhatsApp.'); return; }
+  if(!document.getElementById('consent').checked){ setText('err','Você precisa autorizar pra confirmar.'); return; }
+  const now=new Date().toISOString();
+  const dados={casa_id:casaId, nome, telefone:tel,
+    email:val('email')||null, cpf:val('cpf')||null, data_nascimento:val('nasc')||null,
+    consent:true, consent_em:now};
+  const up=await sb.from('clientes').upsert(dados,{onConflict:'casa_id,telefone'}).select('id').single();
+  const cliente_id=up.data?up.data.id:null;
+
+  // evita duplicar o mesmo convidado (mesmo telefone na mesma reserva)
+  const ex=await sb.from('convidados').select('id').eq('reserva_id',reserva.id).eq('telefone',tel).maybeSingle();
+  const conv={reserva_id:reserva.id, casa_id:casaId, cliente_id, nome, telefone:tel,
+    email:val('email')||null, cpf:val('cpf')||null, data_nascimento:val('nasc')||null,
+    confirmado:true, confirmado_em:now, consent:true, consent_em:now, origem:'link'};
+  let error;
+  if(ex.data){ ({error}=await sb.from('convidados').update(conv).eq('id',ex.data.id)); }
+  else { ({error}=await sb.from('convidados').insert(conv)); }
+  if(error){ setText('err','Erro: '+error.message); return; }
+  return finalizar();
+}
+async function finalizar(){
+  const {count}=await sb.from('convidados').select('id',{count:'exact',head:true})
+    .eq('reserva_id',reserva.id).eq('confirmado',true);
+  const conf=1+(count||0), meta=reserva.confirmacoes_necessarias||reserva.qtd_pessoas;
+  document.getElementById('successMsg').innerHTML =
+    `Você é o nº <b>${conf}</b> de <b>${meta}</b> confirmados.<br>Obrigado! Avise quem ainda não confirmou. 🙌`;
+  show('success');
+}
+
+// ===== util =====
+function show(id){ ['loading','content','success','cfgerr'].forEach(x=>document.getElementById(x).classList.toggle('hidden',x!==id)); }
+function val(id){ return document.getElementById(id).value; }
+function setText(id,t){ document.getElementById(id).textContent=t; }
+</script>
+</body>
+</html>

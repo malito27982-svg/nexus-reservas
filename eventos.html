@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Nexus Reservas — Eventos</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--bg:#0f1115;--card:#1a1d24;--card2:#232732;--line:#2c313c;--txt:#eef1f6;--muted:#9aa3b2;
+    --accent:#3b82f6;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--purple:#a855f7;--slate:#64748b;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;}
+  body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--txt);font-size:17px;}
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:12px;font-size:16px;}
+  input,select,textarea{font-family:inherit;font-size:17px;width:100%;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:var(--txt);outline:none;}
+  .hidden{display:none!important;}
+  header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap;}
+  header .casa{font-weight:700;font-size:19px;}
+  header select.casaSel{width:auto;min-width:180px;padding:10px 12px;}
+  .modesw{display:flex;gap:4px;background:var(--card2);padding:4px;border-radius:14px;}
+  .modesw button{background:transparent;color:var(--muted);padding:10px 16px;font-weight:700;}
+  .modesw button.on{background:var(--accent);color:#fff;}
+  .icnbtn{background:var(--card2);color:var(--txt);padding:12px 14px;margin-left:auto;}
+  main{padding:12px 16px 120px;}
+  .empty{text-align:center;color:var(--muted);padding:60px 20px;}
+  .rcard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px 16px;margin-bottom:12px;}
+  .rcard .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .rcard .nome{font-size:20px;font-weight:700;}
+  .rcard .meta{color:var(--muted);margin-top:6px;font-size:15px;line-height:1.5;}
+  .kpis{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;}
+  .kpi{background:var(--card2);border-radius:12px;padding:8px 14px;text-align:center;min-width:90px;}
+  .kpi b{font-size:22px;display:block;} .kpi span{font-size:12px;color:var(--muted);}
+  .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;}
+  .actions button{flex:1 1 auto;min-width:110px;padding:14px;font-weight:700;color:#fff;}
+  .b-green{background:var(--green);}.b-blue{background:var(--accent);}.b-red{background:var(--red);}
+  .b-amber{background:var(--amber);}.b-slate{background:var(--slate);}.b-purple{background:var(--purple);}
+  .fab{position:fixed;right:20px;bottom:20px;background:var(--accent);color:#fff;font-size:18px;font-weight:800;padding:18px 24px;border-radius:30px;box-shadow:0 8px 24px rgba(0,0,0,.45);z-index:6;}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:16px;z-index:10;overflow:auto;}
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:18px;width:100%;max-width:640px;padding:20px;}
+  .modal h2{margin:0 0 12px;}
+  .field{margin-bottom:12px;} .field label{display:block;font-size:14px;color:var(--muted);margin-bottom:5px;}
+  .row2{display:flex;gap:10px;} .row2>.field{flex:1;}
+  .foot{display:flex;gap:10px;margin-top:16px;} .foot button{flex:1;padding:16px;font-weight:700;}
+  .b-cancel{background:var(--card2);color:var(--txt);}
+  .err{color:var(--red);font-size:14px;margin-top:8px;min-height:18px;}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+  .chip{padding:6px 12px;border-radius:20px;font-size:13px;font-weight:700;color:#fff;}
+  .gline{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--card2);}
+  .gline .gi{flex:1;} .gline .gi b{font-size:16px;} .gline .gi .s{color:var(--muted);font-size:13px;}
+  .gline button{min-width:auto;padding:10px 14px;color:#fff;}
+  .setup{max-width:520px;margin:60px auto;padding:28px;background:var(--card);border:1px solid var(--line);border-radius:18px;}
+  .setup a{color:var(--accent);}
+</style>
+</head>
+<body>
+
+<div id="cfgerr" class="setup hidden">
+  <h1>Conecte primeiro</h1>
+  <p style="color:var(--muted)">Abra o painel de reservas e conecte ao Supabase. Depois volte aqui.</p>
+  <p><a href="tablet.html">→ Abrir painel de reservas</a></p>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <span class="casa" id="casaNome">—</span>
+    <select class="casaSel hidden" id="casaSel" onchange="changeCasa()"></select>
+    <div class="modesw">
+      <button id="m_eventos" class="on" onclick="setModo('eventos')">Eventos</button>
+      <button id="m_block" onclick="setModo('block')">Blocklist</button>
+    </div>
+    <button class="icnbtn" onclick="location.href='tablet.html'">← Reservas</button>
+  </header>
+
+  <main id="eventosView"></main>
+  <main id="blockView" class="hidden"></main>
+  <button class="fab" id="fab" onclick="openCreate()">+ Novo Evento</button>
+</div>
+
+<!-- NOVO EVENTO -->
+<div id="evOverlay" class="overlay hidden"><div class="modal">
+  <h2>Novo Evento</h2>
+  <div class="field"><label>Nome do evento *</label><input id="e_nome"></div>
+  <div class="row2">
+    <div class="field"><label>Data *</label><input id="e_data" type="date"></div>
+    <div class="field"><label>Início</label><input id="e_ini" type="time"></div>
+    <div class="field"><label>Fim</label><input id="e_fim" type="time"></div>
+  </div>
+  <div class="row2">
+    <div class="field"><label>Capacidade</label><input id="e_cap" type="number" min="0"></div>
+  </div>
+  <div class="field"><label>Descrição</label><textarea id="e_desc" rows="2"></textarea></div>
+  <div class="err" id="evErr"></div>
+  <div class="foot"><button class="b-cancel" onclick="closeEv()">Cancelar</button>
+    <button class="b-blue" style="color:#fff" onclick="saveEvento()">Criar evento</button></div>
+</div></div>
+
+<!-- DETALHE DO EVENTO -->
+<div id="detOverlay" class="overlay hidden"><div class="modal">
+  <h2 id="detTitle">Evento</h2>
+  <div class="kpis" id="detKpis"></div>
+
+  <h3 style="margin:16px 0 8px">Listas</h3>
+  <div class="chips" id="detListas"></div>
+  <div class="row2"><div class="field"><input id="l_nome" placeholder="Nova lista (ex: VIP Feminino)"></div>
+    <button class="b-slate" style="color:#fff;padding:0 18px;margin-bottom:12px;border-radius:12px" onclick="createLista()">+ Lista</button></div>
+
+  <h3 style="margin:16px 0 8px">Adicionar convidado</h3>
+  <div class="row2">
+    <div class="field"><input id="g_nome" placeholder="Nome"></div>
+    <div class="field"><input id="g_tel" placeholder="WhatsApp (opcional)"></div>
+  </div>
+  <div class="row2">
+    <div class="field"><select id="g_genero"><option value="">Gênero</option><option>Masculino</option><option>Feminino</option><option>Outro</option></select></div>
+    <div class="field"><select id="g_lista"></select></div>
+    <button class="b-green" style="color:#fff;padding:0 18px;margin-bottom:12px;border-radius:12px" onclick="addConvidado()">+</button>
+  </div>
+  <div class="field"><label>Ou cole vários nomes (1 por linha) na lista selecionada acima</label>
+    <textarea id="g_varios" rows="2"></textarea>
+    <button class="b-slate" style="color:#fff;width:100%;padding:12px;margin-top:8px" onclick="addVarios()">Adicionar lista de nomes</button></div>
+
+  <h3 style="margin:16px 0 8px">Convidados <input id="g_busca" placeholder="🔍 buscar" style="width:auto;display:inline-block;padding:8px 12px;margin-left:8px" oninput="renderConvs()"></h3>
+  <div id="convList"></div>
+  <div class="err" id="detErr"></div>
+  <div class="foot"><button class="b-cancel" onclick="closeDet()">Fechar</button></div>
+</div></div>
+
+<!-- BLOCKLIST ADD -->
+<div id="blkOverlay" class="overlay hidden"><div class="modal">
+  <h2>Adicionar à Blocklist</h2>
+  <div class="field"><label>Nome *</label><input id="b_nome"></div>
+  <div class="row2"><div class="field"><label>Documento</label><input id="b_doc"></div>
+    <div class="field"><label>Data do ocorrido</label><input id="b_data" type="date"></div></div>
+  <div class="field"><label>Observação</label><textarea id="b_obs" rows="2"></textarea></div>
+  <div class="err" id="blkErr"></div>
+  <div class="foot"><button class="b-cancel" onclick="closeBlk()">Cancelar</button>
+    <button class="b-red" style="color:#fff" onclick="saveBlk()">Bloquear</button></div>
+</div></div>
+
+<script>
+let sb=null, casas=[], casaAtual=null, modo='eventos';
+let eventos=[], evCount={}, evReserva=null, listasEv=[], convsEv=[], block=[];
+
+window.addEventListener('DOMContentLoaded', init);
+function init(){
+  const url=localStorage.getItem('sb_url'), key=localStorage.getItem('sb_key');
+  if(!url||!key){ document.getElementById('cfgerr').classList.remove('hidden'); return; }
+  sb=window.supabase.createClient(url,key);
+  document.getElementById('app').classList.remove('hidden');
+  bootstrap();
+}
+async function bootstrap(){
+  const {data,error}=await sb.from('casas').select('*').eq('ativo',true).order('nome');
+  if(error){ alert('Erro: '+error.message); return; }
+  casas=data||[]; if(!casas.length){ alert('Rode o SQL com o SEED.'); return; }
+  casaAtual=casas[0];
+  const sel=document.getElementById('casaSel');
+  if(casas.length>1){ sel.classList.remove('hidden'); sel.innerHTML=casas.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join(''); }
+  document.getElementById('casaNome').textContent=casaAtual.nome;
+  loadData();
+}
+function changeCasa(){ casaAtual=casas.find(c=>c.id===document.getElementById('casaSel').value);
+  document.getElementById('casaNome').textContent=casaAtual.nome; loadData(); }
+
+function setModo(m){ modo=m;
+  document.getElementById('m_eventos').classList.toggle('on',m==='eventos');
+  document.getElementById('m_block').classList.toggle('on',m==='block');
+  document.getElementById('eventosView').classList.toggle('hidden',m!=='eventos');
+  document.getElementById('blockView').classList.toggle('hidden',m!=='block');
+  document.getElementById('fab').textContent = m==='eventos'?'+ Novo Evento':'+ Bloquear pessoa';
+  loadData();
+}
+function openCreate(){ modo==='eventos'?openEv():openBlk(); }
+function loadData(){ modo==='eventos'?loadEventos():loadBlock(); }
+
+// ===== EVENTOS =====
+async function loadEventos(){
+  const {data,error}=await sb.from('eventos').select('*').eq('casa_id',casaAtual.id).order('data',{ascending:false});
+  if(error){ alert('Erro ao ler eventos: '+error.message); return; }
+  eventos=data||[];
+  evCount={};
+  const ids=eventos.map(e=>e.id);
+  if(ids.length){
+    const {data:cv}=await sb.from('evento_convidados').select('evento_id,checkin').in('evento_id',ids);
+    (cv||[]).forEach(c=>{ const e=evCount[c.evento_id]||(evCount[c.evento_id]={lista:0,checkin:0}); e.lista++; if(c.checkin)e.checkin++; });
+  }
+  renderEventos();
+}
+function renderEventos(){
+  const el=document.getElementById('eventosView');
+  if(!eventos.length){ el.innerHTML='<div class="empty">Nenhum evento ainda. Crie no botão azul.</div>'; return; }
+  el.innerHTML=eventos.map(e=>{
+    const c=evCount[e.id]||{lista:0,checkin:0};
+    const conv=c.lista?Math.round(c.checkin/c.lista*100):0;
+    const d=new Date(e.data+'T12:00:00'); const dias=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+    return `<div class="rcard">
+      <div class="top"><span class="nome">${esc(e.nome)}</span></div>
+      <div class="meta">${dias[d.getDay()]} ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}${e.hora_inicio?' · '+e.hora_inicio.slice(0,5):''}${e.capacidade?' · cap. '+e.capacidade:''}${e.descricao?'<br>'+esc(e.descricao):''}</div>
+      <div class="kpis">
+        <div class="kpi"><b>${c.lista}</b><span>Lista</span></div>
+        <div class="kpi"><b>${c.checkin}</b><span>Check-in</span></div>
+        <div class="kpi"><b>${conv}%</b><span>Conversão</span></div>
+      </div>
+      <div class="actions">
+        <button class="b-blue" onclick='openDet(${JSON.stringify(e.id)})'>Abrir</button>
+        <button class="b-red" onclick='delEvento(${JSON.stringify(e.id)})'>Excluir</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function openEv(){ ['e_nome','e_ini','e_fim','e_cap','e_desc'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('e_data').value=new Date().toISOString().slice(0,10); setText('evErr',''); show('evOverlay',true); }
+function closeEv(){ show('evOverlay',false); }
+async function saveEvento(){
+  const nome=val('e_nome').trim(), data=val('e_data');
+  if(!nome||!data){ setText('evErr','Nome e data são obrigatórios.'); return; }
+  const {error}=await sb.from('eventos').insert({casa_id:casaAtual.id, nome, data,
+    hora_inicio:val('e_ini')||null, hora_fim:val('e_fim')||null,
+    capacidade:val('e_cap')?parseInt(val('e_cap'),10):null, descricao:val('e_desc')||null});
+  if(error){ setText('evErr','Erro: '+error.message); return; }
+  closeEv(); loadEventos();
+}
+async function delEvento(id){ if(!confirm('Excluir este evento e seus convidados?'))return; await sb.from('eventos').delete().eq('id',id); loadEventos(); }
+
+// ===== DETALHE =====
+async function openDet(id){
+  evReserva=eventos.find(e=>e.id===id);
+  document.getElementById('detTitle').textContent=evReserva.nome;
+  setText('detErr',''); ['g_nome','g_tel','g_varios','g_busca','l_nome'].forEach(i=>{const el=document.getElementById(i); if(el)el.value='';});
+  show('detOverlay',true);
+  await reloadDet();
+}
+async function reloadDet(){
+  const [l,c]=await Promise.all([
+    sb.from('listas').select('*').eq('evento_id',evReserva.id).order('created_at'),
+    sb.from('evento_convidados').select('*').eq('evento_id',evReserva.id).order('created_at'),
+  ]);
+  listasEv=l.data||[]; convsEv=c.data||[];
+  renderListas(); renderConvs(); renderDetKpis();
+}
+function renderDetKpis(){
+  const ci=convsEv.filter(c=>c.checkin).length, total=convsEv.length;
+  document.getElementById('detKpis').innerHTML=
+    `<div class="kpi"><b>${total}</b><span>Lista</span></div>
+     <div class="kpi"><b>${ci}</b><span>Check-in</span></div>
+     <div class="kpi"><b>${total?Math.round(ci/total*100):0}%</b><span>Conversão</span></div>`;
+}
+function renderListas(){
+  document.getElementById('detListas').innerHTML = listasEv.length
+    ? listasEv.map(l=>`<span class="chip" style="background:${l.cor||'#3b82f6'}">${esc(l.nome)}</span>`).join('')
+    : '<span style="color:var(--muted);font-size:14px">Sem listas. Crie uma (ex: VIP).</span>';
+  document.getElementById('g_lista').innerHTML='<option value="">Sem lista</option>'+listasEv.map(l=>`<option value="${l.id}">${esc(l.nome)}</option>`).join('');
+}
+async function createLista(){
+  const nome=val('l_nome').trim(); if(!nome) return;
+  const cores=['#3b82f6','#ef4444','#22c55e','#a855f7','#f59e0b'];
+  await sb.from('listas').insert({evento_id:evReserva.id, casa_id:casaAtual.id, nome, cor:cores[listasEv.length%cores.length]});
+  document.getElementById('l_nome').value=''; reloadDet();
+}
+function renderConvs(){
+  const q=(val('g_busca')||'').toLowerCase();
+  const arr=convsEv.filter(c=>!q||c.nome.toLowerCase().includes(q)||(c.telefone||'').includes(q));
+  const el=document.getElementById('convList');
+  if(!arr.length){ el.innerHTML='<div style="color:var(--muted);font-size:14px">Nenhum convidado.</div>'; return; }
+  el.innerHTML=arr.map(c=>{
+    const lista=listasEv.find(l=>l.id===c.lista_id);
+    return `<div class="gline"><div class="gi"><b>${esc(c.nome)}</b> ${lista?`<span class="chip" style="background:${lista.cor};font-size:11px;padding:2px 8px">${esc(lista.nome)}</span>`:''}
+      <div class="s">${c.genero?esc(c.genero)+' · ':''}${esc(c.telefone||'')}${c.checkin?' · ✅ entrou':''}</div></div>
+      <button class="${c.checkin?'b-slate':'b-green'}" onclick="toggleCheckin('${c.id}',${c.checkin})">${c.checkin?'Desfazer':'Check-in'}</button>
+      <button class="b-red" onclick="delConv('${c.id}')">✕</button></div>`;
+  }).join('');
+}
+async function addConvidado(){
+  const nome=val('g_nome').trim(); if(!nome){ setText('detErr','Informe o nome.'); return; }
+  await sb.from('evento_convidados').insert({evento_id:evReserva.id, casa_id:casaAtual.id, nome,
+    telefone:val('g_tel')||null, genero:val('g_genero')||null, lista_id:val('g_lista')||null});
+  document.getElementById('g_nome').value=''; document.getElementById('g_tel').value=''; reloadDet();
+}
+async function addVarios(){
+  const linhas=(val('g_varios')||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  if(!linhas.length) return;
+  const lista_id=val('g_lista')||null;
+  const rows=linhas.map(nome=>({evento_id:evReserva.id, casa_id:casaAtual.id, nome, lista_id}));
+  await sb.from('evento_convidados').insert(rows);
+  document.getElementById('g_varios').value=''; reloadDet();
+}
+async function toggleCheckin(id,atual){
+  await sb.from('evento_convidados').update({checkin:!atual, checkin_em:!atual?new Date().toISOString():null}).eq('id',id);
+  reloadDet();
+}
+async function delConv(id){ await sb.from('evento_convidados').delete().eq('id',id); reloadDet(); }
+function closeDet(){ show('detOverlay',false); loadEventos(); }
+
+// ===== BLOCKLIST =====
+async function loadBlock(){
+  const {data,error}=await sb.from('blocklist').select('*').eq('casa_id',casaAtual.id).order('created_at',{ascending:false});
+  if(error){ alert('Erro: '+error.message); return; }
+  block=data||[]; renderBlock();
+}
+function renderBlock(){
+  const el=document.getElementById('blockView');
+  if(!block.length){ el.innerHTML='<div class="empty">Ninguém na blocklist.</div>'; return; }
+  el.innerHTML=block.map(b=>`<div class="gline"><div class="gi"><b>${esc(b.nome)}</b>
+    <div class="s">${b.documento?'Doc '+esc(b.documento)+' · ':''}${b.data_ocorrido?esc(b.data_ocorrido)+' · ':''}${esc(b.observacao||'')}</div></div>
+    <button class="b-red" onclick="delBlk('${b.id}')">Remover</button></div>`).join('');
+}
+function openBlk(){ ['b_nome','b_doc','b_obs'].forEach(i=>document.getElementById(i).value=''); document.getElementById('b_data').value=''; setText('blkErr',''); show('blkOverlay',true); }
+function closeBlk(){ show('blkOverlay',false); }
+async function saveBlk(){
+  const nome=val('b_nome').trim(); if(!nome){ setText('blkErr','Informe o nome.'); return; }
+  const {error}=await sb.from('blocklist').insert({casa_id:casaAtual.id, nome, documento:val('b_doc')||null,
+    data_ocorrido:val('b_data')||null, observacao:val('b_obs')||null});
+  if(error){ setText('blkErr','Erro: '+error.message); return; }
+  closeBlk(); loadBlock();
+}
+async function delBlk(id){ await sb.from('blocklist').delete().eq('id',id); loadBlock(); }
+
+// ===== util =====
+function show(id,on){ document.getElementById(id).classList.toggle('hidden',!on); }
+function val(id){ return document.getElementById(id).value; }
+function setText(id,t){ document.getElementById(id).textContent=t; }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+</script>
+</body>
+</html>
