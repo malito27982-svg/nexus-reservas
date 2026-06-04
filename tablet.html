@@ -58,6 +58,8 @@
   .actions button{flex:1 1 auto; min-width:110px; padding:14px; font-weight:700; color:#fff;}
   .b-green{background:var(--green);} .b-blue{background:var(--accent);} .b-red{background:var(--red);}
   .b-amber{background:var(--amber);} .b-slate{background:var(--slate);} .b-purple{background:var(--purple);}
+  .b-teal{background:#14b8a6;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
 
   .fab{position:fixed; right:20px; bottom:20px; background:var(--accent); color:#fff; font-size:18px;
     font-weight:800; padding:18px 24px; border-radius:30px; box-shadow:0 8px 24px rgba(0,0,0,.45); z-index:6;}
@@ -106,7 +108,11 @@
     <select class="casaSel hidden" id="casaSel" onchange="changeCasa()"></select>
     <div class="modesw">
       <button id="m_reservas" class="on" onclick="setModo('reservas')">Reservas</button>
+      <button id="m_calendario" onclick="setModo('calendario')">📅 Calendário</button>
       <button id="m_fila" onclick="setModo('fila')">Fila de Espera</button>
+      <button id="m_conversas" onclick="setModo('conversas')">💬 Conversas</button>
+      <button id="m_ia" onclick="setModo('ia')">🧠 IA</button>
+      <button id="m_pesquisas" onclick="setModo('pesquisas')">📊 Pesquisas</button>
     </div>
     <div class="datenav">
       <button onclick="shiftDate(-1)">‹</button>
@@ -134,6 +140,54 @@
     <main id="filaList"></main>
   </div>
 
+  <!-- CALENDÁRIO VIEW -->
+  <div id="calendarioView" class="hidden">
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;">
+      <button onclick="shiftMes(-1)">‹</button>
+      <b id="calLabel" style="font-size:18px;min-width:160px;text-align:center;">—</b>
+      <button onclick="shiftMes(1)">›</button>
+      <span style="color:var(--muted);margin-left:10px;">Clique num dia para ver/criar as reservas</span>
+      <button class="b-purple" style="margin-left:auto;color:#fff;" onclick="openExp()">✨ Nova Experiência</button>
+    </div>
+    <div id="calGrid" style="padding:0 12px 16px;"></div>
+    <div style="padding:0 16px 24px;">
+      <h3 style="margin:8px 0;">✨ Experiências / Eventos especiais</h3>
+      <div id="expList" style="color:var(--muted);">—</div>
+    </div>
+  </div>
+
+  <!-- CONVERSAS VIEW (atendimento robô + takeover humano) -->
+  <div id="conversasView" class="hidden">
+    <div class="tabs" id="convFiltros"></div>
+    <main id="convInbox"></main>
+  </div>
+
+  <!-- IA VIEW (base de conhecimento que a IA usa nas respostas + aprovação) -->
+  <div id="iaView" class="hidden" style="padding:16px;max-width:860px;">
+    <p style="color:var(--muted)">O que você cadastrar aqui a IA usa pra responder dúvidas (couvert, taxas, regras, endereço, estacionamento...). Cada inclusão/alteração entra como <b>pendente</b> e precisa ser <b>aprovada</b> antes de ir pro ar.</p>
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px;">
+      <h3 style="margin-top:0;">➕ Nova informação</h3>
+      <div class="grid2">
+        <div class="field"><label>Categoria</label>
+          <select id="ia_cat"><option>Geral</option><option>Reserva</option><option>Evento</option><option>Cardápio</option><option>Delivery</option><option>Fila</option></select></div>
+        <div class="field"><label>Título</label><input id="ia_tit" placeholder="Ex: Couvert artístico"></div>
+      </div>
+      <div class="field"><label>Texto (o que a IA responde)</label><input id="ia_txt" placeholder="Ex: O couvert é R$8 de sexta a domingo."></div>
+      <div class="err" id="iaErr"></div>
+      <button class="b-blue" style="color:#fff;" onclick="saveInfo()">Cadastrar (vai pra aprovação)</button>
+    </div>
+    <h3>⏳ Aguardando aprovação</h3>
+    <div id="iaPend" style="margin-bottom:18px;color:var(--muted)">—</div>
+    <h3>✅ No ar (a IA está usando)</h3>
+    <div id="iaAtivas" style="color:var(--muted)">—</div>
+  </div>
+
+  <!-- PESQUISAS VIEW (NPS cliente + clima funcionários) -->
+  <div id="pesquisasView" class="hidden" style="padding:16px;max-width:880px;">
+    <p style="color:var(--muted)">A pesquisa do cliente é enviada automático no WhatsApp quando você marca a reserva como <b>Concluída</b>. A de funcionários é anônima — compartilhe o link com a equipe.</p>
+    <div id="pesqList">—</div>
+  </div>
+
   <button class="fab" id="fab" onclick="openCreate()">+ Nova Reserva</button>
 </div>
 
@@ -147,6 +201,7 @@
     </div>
     <div class="row2">
       <div class="field"><label>Pessoas *</label><input id="f_qtd" type="number" min="1" value="2"></div>
+      <div class="field"><label>Crianças 🧒</label><input id="f_kids" type="number" min="0" value="0"></div>
       <div class="field"><label>Data *</label><input id="f_data" type="date"></div>
       <div class="field"><label>Hora</label><input id="f_hora" type="time"></div>
     </div>
@@ -219,6 +274,87 @@
   </div>
 </div>
 
+<!-- ============ MODAL: CONVERSA / ATENDIMENTO (takeover humano) ============ -->
+<div id="atendOverlay" class="overlay hidden">
+  <div class="modal" style="max-width:680px;display:flex;flex-direction:column;height:86vh;">
+    <div style="display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);padding-bottom:10px;">
+      <button onclick="closeAtend()" style="background:var(--card2);min-width:auto;padding:8px 12px;">✕</button>
+      <div style="min-width:0;"><div id="atTitle" style="font-weight:700;">—</div><div id="atStatus" style="font-size:13px;color:var(--muted);"></div></div>
+      <div style="margin-left:auto;display:flex;gap:8px;flex-shrink:0;">
+        <button id="atAssumir" onclick="assumir()" style="background:#7c3aed;">🙋 Assumir atendimento</button>
+        <button id="atDevolver" onclick="devolver()" class="hidden" style="background:var(--card2);">🤖 Devolver ao robô</button>
+      </div>
+    </div>
+    <div id="atThread" style="flex:1;overflow-y:auto;padding:12px 4px;display:flex;flex-direction:column;gap:8px;"></div>
+    <div style="display:flex;gap:8px;border-top:1px solid var(--line);padding-top:10px;">
+      <input id="atInput" placeholder="Assuma o atendimento para responder…" style="flex:1;" disabled onkeydown="if(event.key==='Enter')enviarMsg()">
+      <button id="atSend" onclick="enviarMsg()" disabled>Enviar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: DETALHE DA RESERVA ============ -->
+<div id="detOverlay" class="overlay hidden">
+  <div class="modal" style="max-width:640px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <h2 id="detNome" style="margin:0;flex:1;">Reserva</h2>
+      <span id="detPill" class="pill"></span>
+      <button class="b-cancel" style="min-width:auto;padding:8px 12px;" onclick="closeDet()">✕</button>
+    </div>
+    <div id="detInfo" style="line-height:1.7;"></div>
+    <div id="detActions" style="display:flex;flex-wrap:wrap;gap:8px;margin:14px 0;"></div>
+    <div style="display:flex;gap:10px;align-items:flex-end;border-top:1px solid var(--line);padding-top:12px;">
+      <div class="field" style="margin:0;"><label>Pessoas 👥</label><input id="det_pessoas" type="number" min="1" style="width:90px;"></div>
+      <div class="field" style="margin:0;"><label>Crianças 🧒</label><input id="det_kids" type="number" min="0" style="width:90px;"></div>
+      <div class="field" style="margin:0;flex:1;"><label>Observação 📝</label><input id="det_obs"></div>
+      <button class="b-blue" style="color:#fff;" onclick="saveDet()">Salvar</button>
+    </div>
+    <div style="margin-top:8px;"><button class="b-slate" onclick='openConv(detId)'>➕ Adicionar pessoa à mesa (vai pro CRM)</button></div>
+    <h3 style="margin:18px 0 6px;">📜 Histórico do cliente</h3>
+    <div id="detHist" style="color:var(--muted);">—</div>
+  </div>
+</div>
+
+<!-- ============ MODAL: NOVA EXPERIÊNCIA / EVENTO ============ -->
+<div id="expOverlay" class="overlay hidden">
+  <div class="modal" style="max-width:640px;">
+    <h2 style="margin-top:0;">✨ Nova Experiência / Evento</h2>
+    <div class="field"><label>Título *</label><input id="e_titulo" placeholder="Ex: Jantar de Natal, Final da Copa..."></div>
+    <div class="field"><label>Descrição</label><input id="e_desc" placeholder="Breve descrição que o robô fala ao cliente"></div>
+    <div class="field"><label>Regras / informações</label><input id="e_regras"></div>
+    <div class="grid2">
+      <div class="field"><label>Tipo</label><select id="e_tipo" onchange="expTipo()"><option value="temporaria">Temporária (data específica)</option><option value="permanente">Permanente (repete na semana)</option></select></div>
+      <div class="field" id="e_dataWrap"><label>Data</label><input id="e_data" type="date"></div>
+    </div>
+    <div class="field hidden" id="e_diasWrap"><label>Dias da semana</label>
+      <div id="e_dias" style="display:flex;gap:10px;flex-wrap:wrap;">
+        <label><input type="checkbox" value="0">Dom</label><label><input type="checkbox" value="1">Seg</label><label><input type="checkbox" value="2">Ter</label><label><input type="checkbox" value="3">Qua</label><label><input type="checkbox" value="4">Qui</label><label><input type="checkbox" value="5">Sex</label><label><input type="checkbox" value="6">Sáb</label>
+      </div>
+    </div>
+    <div class="field"><div class="toggle"><input type="checkbox" id="e_altera"><label style="margin:0;">Muda o horário/lotação do dia</label></div></div>
+    <div class="grid2">
+      <div class="field"><label>Hora início</label><input id="e_hmin" type="time"></div>
+      <div class="field"><label>Hora fim</label><input id="e_hmax" type="time"></div>
+    </div>
+    <div class="field"><label>Lotação especial do dia (opcional)</label><input id="e_cap" type="number" min="0"></div>
+    <div class="grid2">
+      <div class="field"><label>Menu/pacote especial</label><input id="e_menu" placeholder="Ex: Menu degustação 5 tempos"></div>
+      <div class="field"><label>Preço (R$)</label><input id="e_preco" type="number" min="0" step="0.01"></div>
+    </div>
+    <div class="field"><div class="toggle"><input type="checkbox" id="e_div" checked><label style="margin:0;">Robô divulga/oferece pro cliente</label></div></div>
+    <div class="field"><label>Mensagem de divulgação (opcional)</label><input id="e_msg"></div>
+    <div class="grid2">
+      <div class="field"><label>Formato</label><select id="e_formato"><option value="mesa">Reserva de mesa normal</option><option value="ingresso">Ingresso (pago)</option><option value="lista">Lista / guest list</option></select></div>
+      <div class="field"><label>Preço do ingresso (R$)</label><input id="e_pingresso" type="number" min="0" step="0.01"></div>
+    </div>
+    <div class="err" id="expErr"></div>
+    <div class="foot">
+      <button class="b-cancel" onclick="closeExp()">Cancelar</button>
+      <button class="b-blue" style="color:#fff;" onclick="saveExp()">Criar experiência</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ===================== Estado =====================
 let sb=null, casas=[], casaAtual=null, ambientes=[], giros=[], dataSel=isoToday();
@@ -226,7 +362,7 @@ let modo='reservas', reservas=[], convCount={}, fila=[], tabAtual='dia', filaTab
 let convReserva=null, vendoFuturas=false;
 
 const STATUS_TABS=[
-  {key:'dia',      label:'Reservas do Dia', match:['pendente','confirmada']},
+  {key:'dia',      label:'Reservas do Dia', match:['pendente','confirmada','chegou']},
   {key:'checkin',  label:'Check-in',        match:['checkin']},
   {key:'concluido',label:'Concluído',       match:['concluido']},
   {key:'no_show',  label:'No Show',         match:['no_show']},
@@ -234,7 +370,7 @@ const STATUS_TABS=[
   {key:'passante', label:'Passante',        match:null},
 ];
 const STATUS_PILL={pendente:['#64748b','Pendente'],confirmada:['#22c55e','Confirmada'],
-  checkin:['#3b82f6','Sentou'],concluido:['#a855f7','Concluído'],no_show:['#ef4444','No-Show'],cancelado:['#475569','Cancelado']};
+  chegou:['#14b8a6','Chegou'],checkin:['#3b82f6','Sentou'],concluido:['#a855f7','Concluído'],no_show:['#ef4444','No-Show'],cancelado:['#475569','Cancelado']};
 const FILA_TABS=[
   {key:'aguardando',label:'Aguardando',match:['aguardando','chamado']},
   {key:'sentado',   label:'Sentou',    match:['sentado']},
@@ -285,14 +421,245 @@ function changeCasa(){
 function setModo(m){
   modo=m;
   document.getElementById('m_reservas').classList.toggle('on',m==='reservas');
+  document.getElementById('m_calendario').classList.toggle('on',m==='calendario');
   document.getElementById('m_fila').classList.toggle('on',m==='fila');
+  document.getElementById('m_conversas').classList.toggle('on',m==='conversas');
+  document.getElementById('m_ia').classList.toggle('on',m==='ia');
+  document.getElementById('m_pesquisas').classList.toggle('on',m==='pesquisas');
   document.getElementById('reservasView').classList.toggle('hidden',m!=='reservas');
+  document.getElementById('calendarioView').classList.toggle('hidden',m!=='calendario');
   document.getElementById('filaView').classList.toggle('hidden',m!=='fila');
+  document.getElementById('conversasView').classList.toggle('hidden',m!=='conversas');
+  document.getElementById('iaView').classList.toggle('hidden',m!=='ia');
+  document.getElementById('pesquisasView').classList.toggle('hidden',m!=='pesquisas');
+  document.getElementById('fab').classList.toggle('hidden',m==='conversas'||m==='calendario'||m==='ia'||m==='pesquisas');
   document.getElementById('fab').textContent = m==='reservas'?'+ Nova Reserva':'+ Adicionar à fila';
+  if(convPoll){clearInterval(convPoll);convPoll=null;}
+  if(m==='conversas'){ convPoll=setInterval(()=>{ if(document.getElementById('atendOverlay').classList.contains('hidden')) loadConversas(); },6000); }
+  if(m==='calendario'){ calAnchor=mesAnchorFromDataSel(); }
   loadData();
 }
 function openCreate(){ modo==='reservas'?openForm():openFila(); }
-function loadData(){ modo==='reservas'?loadReservas():loadFila(); }
+function loadData(){ modo==='reservas'?loadReservas():modo==='fila'?loadFila():modo==='calendario'?loadCalendario():modo==='ia'?loadIA():modo==='pesquisas'?loadPesquisas():loadConversas(); }
+
+// ===================== PESQUISAS (NPS cliente + clima funcionários) =====================
+async function loadPesquisas(){
+  if(!casaAtual) return;
+  const {data}=await sb.from('pesquisas').select('*').or(`casa_id.eq.${casaAtual.id},tipo.eq.funcionario`).eq('ativo',true);
+  const pesqs=data||[];
+  const ids=pesqs.map(p=>p.id);
+  let resp=[];
+  if(ids.length){ resp=(await sb.from('pesquisa_respostas').select('*').in('pesquisa_id',ids).order('criado_em',{ascending:false})).data||[]; }
+  document.getElementById('pesqList').innerHTML=pesqs.map(p=>{
+    const rs=resp.filter(r=>r.pesquisa_id===p.id);
+    const npsVals=rs.map(r=>r.nps).filter(n=>n!=null);
+    const promo=npsVals.filter(n=>n>=9).length, detra=npsVals.filter(n=>n<=6).length;
+    const nps=npsVals.length?Math.round((promo-detra)/npsVals.length*100):null;
+    const media=npsVals.length?(npsVals.reduce((s,n)=>s+n,0)/npsVals.length).toFixed(1):'—';
+    const link='https://lucasmalito.github.io/nexus-reservas/pesquisa.html?p='+p.slug;
+    const coment=rs.map(r=>(r.respostas||[]).filter(x=>typeof x.resposta==='string'&&x.resposta.length>2&&!(p.perguntas.find(q=>q.q===x.pergunta&&q.t==='escolha'))).map(x=>esc(x.resposta))).flat().slice(0,5);
+    return `<div class="card" style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
+        <b>${p.tipo==='funcionario'?'👥 ':'🍻 '}${esc(p.titulo)} <span class="muted" style="font-size:12px;">(${p.tipo})</span></b>
+        <button class="b-slate" onclick="navigator.clipboard.writeText('${link}');this.textContent='Copiado!'">🔗 Copiar link</button>
+      </div>
+      <div style="display:flex;gap:18px;margin:10px 0;flex-wrap:wrap;">
+        <div><div style="font-size:26px;font-weight:800;">${nps==null?'—':nps}</div><div class="muted" style="font-size:12px;">NPS</div></div>
+        <div><div style="font-size:26px;font-weight:800;">${media}</div><div class="muted" style="font-size:12px;">média (0-10)</div></div>
+        <div><div style="font-size:26px;font-weight:800;">${rs.length}</div><div class="muted" style="font-size:12px;">respostas</div></div>
+      </div>
+      ${coment.length?'<div class="muted" style="font-size:13px;"><b>Comentários:</b><br>'+coment.map(c=>'• '+c).join('<br>')+'</div>':'<div class="muted" style="font-size:13px;">Sem comentários ainda.</div>'}
+    </div>`;
+  }).join('')||'<span class="muted">Nenhuma pesquisa.</span>';
+}
+
+// ===================== IA — base de conhecimento + aprovação =====================
+async function saveInfo(){
+  const tit=val('ia_tit').trim(), txt=val('ia_txt').trim();
+  if(!tit||!txt){ setText('iaErr','Preencha título e texto.'); return; }
+  const {error}=await sb.from('casa_infos').insert({casa_id:casaAtual.id, categoria:val('ia_cat'), titulo:tit, texto:txt, status:'pendente', criado_por:'painel'});
+  if(error){ setText('iaErr','Erro: '+error.message); return; }
+  document.getElementById('ia_tit').value=''; document.getElementById('ia_txt').value=''; setText('iaErr','');
+  loadIA();
+}
+async function loadIA(){
+  if(!casaAtual) return;
+  const {data}=await sb.from('casa_infos').select('*').eq('casa_id',casaAtual.id).order('criado_em',{ascending:false});
+  const all=data||[];
+  const pend=all.filter(i=>i.status==='pendente'), ativ=all.filter(i=>i.status==='aprovado');
+  const linha=(i,acoes)=>`<div class="card" style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;gap:8px;align-items:start;"><div><b>${esc(i.titulo)}</b> <span class="muted" style="font-size:12px;">[${esc(i.categoria||'Geral')}]</span><br><span style="color:var(--muted)">${esc(i.texto)}</span></div><div style="display:flex;gap:6px;flex-shrink:0;">${acoes}</div></div></div>`;
+  document.getElementById('iaPend').innerHTML=pend.length?pend.map(i=>linha(i,
+    `<button class="b-green" onclick="aprovarInfo('${i.id}')">✓ Aprovar</button><button class="del" onclick="delInfo('${i.id}')">Recusar</button>`)).join(''):'<span class="muted">Nada aguardando aprovação.</span>';
+  document.getElementById('iaAtivas').innerHTML=ativ.length?ativ.map(i=>linha(i,
+    `<button class="del" onclick="delInfo('${i.id}')">Remover</button>`)).join(''):'<span class="muted">Nenhuma informação no ar ainda.</span>';
+}
+async function aprovarInfo(id){ await sb.from('casa_infos').update({status:'aprovado',aprovado_em:new Date().toISOString()}).eq('id',id); loadIA(); }
+async function delInfo(id){ if(!confirm('Remover esta informação?'))return; await sb.from('casa_infos').delete().eq('id',id); loadIA(); }
+
+// ===================== CONVERSAS (atendimento + takeover humano) =====================
+const WPP_URL='https://kuyhkltbwlkvtgbabscv.supabase.co/functions/v1/wpp';
+const PANEL_SECRET='nexuspainel2026';
+let convFiltro='todas', convAtual=null, convPoll=null, atendPoll=null;
+
+async function loadConversas(){
+  if(!casaAtual) return;
+  const {data,error}=await sb.from('conversas').select('telefone,historico,handoff,aguardando,updated_at,nome').eq('casa_id',casaAtual.id).order('updated_at',{ascending:false}).limit(100);
+  const inbox=document.getElementById('convInbox');
+  if(error){ inbox.innerHTML='<div style="padding:20px;color:var(--muted)">Erro: '+esc(error.message)+'</div>'; return; }
+  let lista=(data||[]).filter(c=>Array.isArray(c.historico)&&c.historico.length);
+  const total=lista.length, humano=lista.filter(c=>c.handoff).length;
+  // nomes do CRM
+  let nomes={};
+  const tels=lista.map(c=>c.telefone);
+  if(tels.length){ const {data:cl}=await sb.from('clientes').select('telefone,nome').eq('casa_id',casaAtual.id).in('telefone',tels); (cl||[]).forEach(x=>nomes[x.telefone]=x.nome); }
+  if(convFiltro==='humano') lista=lista.filter(c=>c.handoff);
+  document.getElementById('convFiltros').innerHTML=
+    `<button class="${convFiltro==='todas'?'on':''}" onclick="setConvFiltro('todas')">Todas ${total}</button>`+
+    `<button class="${convFiltro==='humano'?'on':''}" onclick="setConvFiltro('humano')">🙋 Em atendimento ${humano}</button>`;
+  inbox.innerHTML = lista.length? lista.map(c=>{
+    const last=c.historico[c.historico.length-1]||{};
+    const quem=last.role==='user'?'':(last.humano?'Você: ':'🤖 ');
+    const prev=esc((quem+(last.content||'')).slice(0,90));
+    const badge=c.handoff?'<span style="background:#7c3aed;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🙋 Humano</span>':'<span style="background:#0a7a55;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🤖 IA ativa</span>';
+    const nome=nomes[c.telefone]||c.nome||c.telefone;
+    return `<div class="card" style="cursor:pointer;" onclick="openAtend('${c.telefone}')">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><b>${esc(nome)}</b>${badge}</div>
+      <div style="color:var(--muted);font-size:14px;margin-top:4px;">${prev}</div>
+      <div style="color:var(--muted);font-size:12px;margin-top:2px;">${fmtHora(c.updated_at)} · ${c.telefone}</div>
+    </div>`;
+  }).join(''):'<div style="padding:24px;color:var(--muted)">Nenhuma conversa ainda.</div>';
+}
+function setConvFiltro(f){ convFiltro=f; loadConversas(); }
+
+// ===================== CALENDÁRIO =====================
+let calAnchor=null;
+function mesAnchorFromDataSel(){ const d=new Date(dataSel+'T12:00:00'); return new Date(d.getFullYear(),d.getMonth(),1); }
+function shiftMes(n){ if(!calAnchor)calAnchor=mesAnchorFromDataSel(); calAnchor=new Date(calAnchor.getFullYear(),calAnchor.getMonth()+n,1); loadCalendario(); }
+async function loadCalendario(){
+  if(!casaAtual) return;
+  if(!calAnchor) calAnchor=mesAnchorFromDataSel();
+  const y=calAnchor.getFullYear(), m=calAnchor.getMonth();
+  const first=ymd(new Date(y,m,1)), last=ymd(new Date(y,m+1,0));
+  const meses=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  document.getElementById('calLabel').textContent=meses[m]+' '+y;
+  const {data}=await sb.from('reservas').select('data,qtd_pessoas,status').eq('casa_id',casaAtual.id).gte('data',first).lte('data',last).neq('status','cancelado');
+  const agg={}; (data||[]).forEach(r=>{ const a=agg[r.data]=agg[r.data]||{n:0,p:0}; a.n++; a.p+=(r.qtd_pessoas||0); });
+  renderCalendario(y,m,agg);
+  loadExps();
+}
+function renderCalendario(y,m,agg){
+  const dias=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  const firstDow=new Date(y,m,1).getDay(), nDays=new Date(y,m+1,0).getDate(), hoje=isoToday();
+  let html='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;">';
+  html+=dias.map(d=>`<div style="text-align:center;color:var(--accent);font-weight:700;padding:4px;">${d}</div>`).join('');
+  for(let i=0;i<firstDow;i++) html+='<div></div>';
+  for(let day=1;day<=nDays;day++){
+    const ds=ymd(new Date(y,m,day)), a=agg[ds], isHoje=ds===hoje;
+    const info=a?`<div style="margin-top:6px;font-size:13px;color:var(--txt)">📅 ${a.n} · 👥 ${a.p}</div>`:'<div style="margin-top:6px;font-size:13px;color:var(--muted)">—</div>';
+    html+=`<div onclick="goToDayCal('${ds}')" style="cursor:pointer;min-height:78px;border:1px solid ${isHoje?'var(--accent)':'var(--line)'};border-radius:10px;padding:8px;background:${a?'var(--card)':'var(--card2)'};">
+      <div style="font-weight:700;${isHoje?'color:var(--accent)':''}">${day}</div>${info}</div>`;
+  }
+  html+='</div>';
+  document.getElementById('calGrid').innerHTML=html;
+}
+function goToDayCal(ds){ dataSel=ds; vendoFuturas=false; atualizaBotaoFut(); refreshDateLabel(); setModo('reservas'); }
+
+// ===================== EXPERIÊNCIAS / EVENTOS =====================
+function openExp(){
+  ['e_titulo','e_desc','e_regras','e_data','e_hmin','e_hmax','e_cap','e_menu','e_preco','e_msg','e_pingresso'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('e_tipo').value='temporaria'; document.getElementById('e_altera').checked=false;
+  document.getElementById('e_div').checked=true; document.getElementById('e_formato').value='mesa';
+  document.querySelectorAll('#e_dias input').forEach(c=>c.checked=false);
+  expTipo(); setText('expErr',''); show2('expOverlay',true);
+}
+function closeExp(){ show2('expOverlay',false); }
+function expTipo(){ const t=val('e_tipo');
+  document.getElementById('e_dataWrap').classList.toggle('hidden',t!=='temporaria');
+  document.getElementById('e_diasWrap').classList.toggle('hidden',t!=='permanente'); }
+async function saveExp(){
+  const titulo=val('e_titulo').trim(); if(!titulo){ setText('expErr','Título é obrigatório.'); return; }
+  const tipo=val('e_tipo');
+  const dias=[...document.querySelectorAll('#e_dias input:checked')].map(c=>parseInt(c.value,10));
+  const altera=document.getElementById('e_altera').checked;
+  if(tipo==='temporaria' && !val('e_data')){ setText('expErr','Escolha a data.'); return; }
+  if(tipo==='permanente' && !dias.length){ setText('expErr','Escolha ao menos um dia da semana.'); return; }
+  const rec={ casa_id:casaAtual.id, titulo, descricao:val('e_desc')||null, regras:val('e_regras')||null,
+    tipo, data: tipo==='temporaria'?(val('e_data')||null):null, dias_semana: tipo==='permanente'?dias:null,
+    altera_dia:altera, hora_min:altera?(val('e_hmin')||null):null, hora_max:altera?(val('e_hmax')||null):null,
+    capacidade: val('e_cap')?parseInt(val('e_cap'),10):null,
+    menu_especial:val('e_menu')||null, menu_preco: val('e_preco')?parseFloat(val('e_preco')):null,
+    divulgar:document.getElementById('e_div').checked, mensagem_divulgacao:val('e_msg')||null,
+    formato:val('e_formato'), preco_ingresso: val('e_pingresso')?parseFloat(val('e_pingresso')):null };
+  const {error}=await sb.from('experiencias').insert(rec);
+  if(error){ setText('expErr','Erro: '+error.message); return; }
+  closeExp(); loadExps();
+}
+async function loadExps(){
+  if(!casaAtual) return;
+  const {data}=await sb.from('experiencias').select('*').eq('casa_id',casaAtual.id).eq('ativo',true).order('data',{ascending:true,nullsFirst:false});
+  const el=document.getElementById('expList'); if(!el) return;
+  if(!data||!data.length){ el.innerHTML='<span style="color:var(--muted)">Nenhuma experiência cadastrada. Clique em "✨ Nova Experiência".</span>'; return; }
+  const dias=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  el.innerHTML=data.map(e=>{
+    const quando=e.tipo==='temporaria'?(e.data?e.data.split('-').reverse().join('/'):'—'):'toda '+(e.dias_semana||[]).map(d=>dias[d]).join(', ');
+    const tags=[e.altera_dia?'⏰ '+(e.hora_min?e.hora_min.slice(0,5)+'-'+(e.hora_max?e.hora_max.slice(0,5):''):'muda horário'):'',
+      e.menu_especial?'🍽️ '+esc(e.menu_especial)+(e.menu_preco?' R$'+e.menu_preco:''):'',
+      e.divulgar?'📣 divulga':'',
+      e.formato!=='mesa'?('🎟️ '+e.formato+(e.preco_ingresso?' R$'+e.preco_ingresso:'')):''].filter(Boolean).join(' · ');
+    return `<div class="card" style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><b>${esc(e.titulo)}</b><button class="del" onclick="delExp('${e.id}')">Remover</button></div><div style="color:var(--muted);font-size:14px;">📅 ${quando}${e.descricao?' — '+esc(e.descricao):''}${tags?'<br>'+tags:''}</div></div>`;
+  }).join('');
+}
+async function delExp(id){ if(!confirm('Remover esta experiência?'))return; await sb.from('experiencias').update({ativo:false}).eq('id',id); loadExps(); }
+function fmtHora(ts){ if(!ts) return ''; const d=new Date(ts); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+
+async function openAtend(telefone){
+  const {data}=await sb.from('conversas').select('*').eq('casa_id',casaAtual.id).eq('telefone',telefone).maybeSingle();
+  convAtual=data; if(!convAtual) return;
+  document.getElementById('atendOverlay').classList.remove('hidden');
+  renderAtend();
+  if(atendPoll) clearInterval(atendPoll);
+  atendPoll=setInterval(refreshAtend,4000);
+}
+function renderAtend(){
+  const c=convAtual, h=c.handoff;
+  document.getElementById('atTitle').textContent=c.telefone;
+  document.getElementById('atStatus').textContent=h?'🙋 Você assumiu — o robô está pausado nesta conversa':'🤖 Robô atendendo automaticamente';
+  document.getElementById('atAssumir').classList.toggle('hidden',h);
+  document.getElementById('atDevolver').classList.toggle('hidden',!h);
+  const inp=document.getElementById('atInput'); inp.disabled=!h; document.getElementById('atSend').disabled=!h;
+  inp.placeholder=h?'Escreva sua resposta…':'Assuma o atendimento para responder…';
+  const thread=document.getElementById('atThread');
+  const hist=Array.isArray(c.historico)?c.historico:[];
+  thread.innerHTML=hist.map(m=>{
+    const eu=m.role!=='user';
+    const bg=m.role==='user'?'var(--card2)':(m.humano?'#7c3aed':'#075e54');
+    const al=eu?'flex-end':'flex-start';
+    const tag=m.role==='user'?'Cliente':(m.humano?'Você':'Robô');
+    return `<div style="align-self:${al};max-width:78%;background:${bg};color:#fff;padding:8px 12px;border-radius:12px;">
+      <div style="font-size:11px;opacity:.7;margin-bottom:2px;">${tag}</div>${esc(m.content||'')}</div>`;
+  }).join('');
+  thread.scrollTop=thread.scrollHeight;
+}
+async function refreshAtend(){
+  if(!convAtual) return;
+  const {data}=await sb.from('conversas').select('*').eq('casa_id',casaAtual.id).eq('telefone',convAtual.telefone).maybeSingle();
+  if(data){ convAtual=data; renderAtend(); }
+}
+function closeAtend(){ document.getElementById('atendOverlay').classList.add('hidden'); if(atendPoll){clearInterval(atendPoll);atendPoll=null;} convAtual=null; loadConversas(); }
+async function painel(op,extra){
+  const body=Object.assign({op,casa_id:casaAtual.id,telefone:convAtual.telefone,secret:PANEL_SECRET},extra||{});
+  try{ const r=await fetch(WPP_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return await r.json(); }
+  catch(e){ return {ok:false,erro:String(e)}; }
+}
+async function assumir(){ await painel('painel_assumir'); await refreshAtend(); }
+async function devolver(){ await painel('painel_devolver'); await refreshAtend(); }
+async function enviarMsg(){
+  const inp=document.getElementById('atInput'); const t=inp.value.trim(); if(!t) return;
+  inp.value=''; document.getElementById('atSend').disabled=true;
+  const res=await painel('painel_send',{texto:t});
+  if(!res || !res.ok) alert('Não consegui enviar: '+((res&&(res.erro||res.status))||'erro'));
+  await refreshAtend(); document.getElementById('atSend').disabled=false;
+}
 
 // ===================== Datas =====================
 function isoToday(){ return ymd(new Date()); }
@@ -316,7 +683,7 @@ async function loadReservas(){
   if(error){ alert('Erro ao ler reservas: '+error.message); return; }
   reservas=data||[];
   await loadConvidados();
-  renderTabs(); renderOcc(); renderList();
+  renderTabs(); renderOcc(); renderList(); refreshDet();
 }
 async function loadConvidados(){
   convCount={}; const ids=reservas.map(r=>r.id); if(!ids.length) return;
@@ -372,7 +739,8 @@ function card(r){
   const [col,lbl]=STATUS_PILL[r.status]||['#64748b',r.status];
   const hora=r.hora?r.hora.slice(0,5):'—';
   const conf=1+(convCount[r.id]||0), meta=r.confirmacoes_necessarias||r.qtd_pessoas;
-  return `<div class="rcard">
+  const kids=r.qtd_criancas?` <span style="color:var(--muted)">+ ${r.qtd_criancas} 🧒</span>`:'';
+  return `<div class="rcard" style="cursor:pointer" onclick="openDet('${r.id}')">
     <div class="top">
       <span class="nome">${esc(r.nome)}</span>
       <span class="pill" style="background:${col}">${lbl}</span>
@@ -381,12 +749,12 @@ function card(r){
       <span class="hora">${hora}</span>
     </div>
     <div class="meta">
-      <span class="ppl">${r.qtd_pessoas} pessoas</span> · ${amb?esc(amb.nome):'sem setor'}${r.ocasiao?' · '+esc(r.ocasiao):''}<br>
+      <span class="ppl">${r.qtd_pessoas} pessoas</span>${kids} · ${amb?esc(amb.nome):'sem setor'}${r.ocasiao?' · '+esc(r.ocasiao):''}<br>
       📱 ${esc(r.telefone||'—')}${r.cpf?' · CPF '+esc(r.cpf):''}${r.email?' · ✉️ '+esc(r.email):''}${r.data_nascimento?' · 🎂 '+esc(r.data_nascimento):''}${r.observacao?'<br>📝 '+esc(r.observacao):''}<br>
       ${r.mesa_numero?'🪑 <b>Mesa '+esc(r.mesa_numero)+'</b> · EPOC: '+(r.epoc_status||'—')+'<br>':''}
       ✅ <b>${conf}/${meta}</b> confirmados
     </div>
-    <div class="actions">${actions(r)}
+    <div class="actions" onclick="event.stopPropagation()">${actions(r)}
       <button class="b-slate" onclick='openConv(${JSON.stringify(r.id)})'>Convidados</button>
       <button class="b-slate" onclick="transferir('${r.id}')">↔ Transferir</button>
     </div>
@@ -395,9 +763,10 @@ function card(r){
 function actions(r){
   const A=(cls,fn,lbl)=>`<button class="${cls}" onclick="setStatus('${r.id}','${fn}')">${lbl}</button>`;
   const M=`<button class="b-green" onclick="openMesa('${r.id}')">${r.mesa_numero?'Mesa '+esc(r.mesa_numero)+' ✎':'Abrir mesa'}</button>`;
-  if(r.status==='pendente')   return A('b-blue','confirmada','Confirmar')+A('b-purple','checkin','Check-in')+A('b-amber','no_show','No-show')+A('b-red','cancelado','Cancelar');
-  if(r.status==='confirmada') return A('b-purple','checkin','Check-in')+M+A('b-amber','no_show','No-show')+A('b-red','cancelado','Cancelar');
-  if(r.status==='checkin')    return M+A('b-purple','concluido','Concluir')+A('b-amber','no_show','No-show');
+  if(r.status==='pendente')   return A('b-blue','confirmada','Confirmar')+A('b-teal','chegou','Chegou')+A('b-purple','checkin','Sentou')+A('b-amber','no_show','Não veio')+A('b-red','cancelado','Cancelar');
+  if(r.status==='confirmada') return A('b-teal','chegou','Chegou')+A('b-purple','checkin','Sentou')+M+A('b-amber','no_show','Não veio')+A('b-red','cancelado','Cancelar');
+  if(r.status==='chegou')     return A('b-purple','checkin','Sentou')+M+A('b-amber','no_show','Não veio')+A('b-red','cancelado','Cancelar');
+  if(r.status==='checkin')    return M+A('b-purple','concluido','Concluir')+A('b-amber','no_show','Não veio');
   return A('b-slate','pendente','Reabrir');
 }
 async function openMesa(id){
@@ -435,6 +804,57 @@ async function setStatus(id,st){
   const {error}=await sb.from('reservas').update(patch).eq('id',id);
   if(error){ alert('Erro: '+error.message); return; }
   loadReservas();
+  if(st==='concluido') enviarPesquisa(id);
+}
+async function enviarPesquisa(id){
+  const r=reservas.find(x=>x.id===id); if(!r||!r.telefone) return;
+  const link='https://lucasmalito.github.io/nexus-reservas/pesquisa.html?p=cli-'+casaAtual.slug+'&r='+encodeURIComponent(r.telefone);
+  try{ await fetch(WPP_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'painel_send',casa_id:casaAtual.id,telefone:r.telefone,secret:PANEL_SECRET,texto:'Oi '+(r.nome||'')+'! Que bom ter você no '+(casaAtual.nome_curto||casaAtual.nome)+' hoje 🍻 Sua opinião vale muito pra gente — responde rapidinho? '+link})}); }catch(e){}
+}
+
+// ===================== DETALHE DA RESERVA =====================
+let detId=null;
+async function openDet(id){ detId=id; document.getElementById('detOverlay').classList.remove('hidden'); renderDet(); await loadHist(id); }
+function closeDet(){ document.getElementById('detOverlay').classList.add('hidden'); detId=null; }
+function refreshDet(){ if(detId && !document.getElementById('detOverlay').classList.contains('hidden')) renderDet(); }
+function renderDet(){
+  const r=reservas.find(x=>x.id===detId); if(!r){ closeDet(); return; }
+  const amb=ambientes.find(a=>a.id===r.ambiente_id);
+  const [col,lbl]=STATUS_PILL[r.status]||['#64748b',r.status];
+  document.getElementById('detNome').textContent=r.nome;
+  const pill=document.getElementById('detPill'); pill.textContent=lbl; pill.style.background=col;
+  const hora=r.hora?r.hora.slice(0,5):'—', dataBR=r.data?r.data.split('-').reverse().join('/'):'—';
+  document.getElementById('detInfo').innerHTML=
+    `📅 <b>${dataBR}</b> às <b>${hora}</b> · ${amb?esc(amb.nome):'sem setor'}${r.passante?' · <b>PASSANTE</b>':''}<br>`+
+    `📱 ${esc(r.telefone||'—')}${r.cpf?' · CPF '+esc(r.cpf):''}<br>`+
+    `${r.email?'✉️ '+esc(r.email)+'<br>':''}${r.data_nascimento?'🎂 '+esc(r.data_nascimento)+'<br>':''}`+
+    `${r.ocasiao?'🎉 '+esc(r.ocasiao)+'<br>':''}${r.restricoes_alimentares?'🥗 '+esc(r.restricoes_alimentares)+'<br>':''}`+
+    `${r.mesa_numero?'🪑 <b>Mesa '+esc(r.mesa_numero)+'</b> · EPOC: '+(r.epoc_status||'—')+'<br>':''}`+
+    `🌐 origem: ${esc(r.origem||'—')}`;
+  document.getElementById('detActions').innerHTML=actions(r)+
+    `<button class="b-slate" onclick='openConv(${JSON.stringify(r.id)})'>Convidados</button>`+
+    `<button class="b-slate" onclick="transferir('${r.id}')">↔ Transferir</button>`;
+  document.getElementById('det_pessoas').value=r.qtd_pessoas||1;
+  document.getElementById('det_kids').value=r.qtd_criancas||0;
+  document.getElementById('det_obs').value=r.observacao||'';
+}
+async function loadHist(id){
+  const r=reservas.find(x=>x.id===id); const el=document.getElementById('detHist');
+  if(!r||!r.telefone){ el.textContent='—'; return; }
+  const {data}=await sb.from('reservas').select('data,hora,qtd_pessoas,status,casa_id').eq('telefone',r.telefone).neq('id',id).order('data',{ascending:false}).limit(20);
+  if(!data||!data.length){ el.innerHTML='<span style="color:var(--muted)">Primeira reserva deste cliente. 🎉</span>'; return; }
+  const nCasa=(cid)=>{const c=casas.find(x=>x.id===cid);return c?(c.nome_curto||c.nome):'';};
+  const conc=data.filter(x=>x.status==='concluido').length, no=data.filter(x=>x.status==='no_show').length;
+  el.innerHTML=`<div style="margin-bottom:6px;color:var(--txt)"><b>${data.length}</b> reserva(s) anterior(es) · ✅ ${conc} concluídas · ⚠️ ${no} não compareceu</div>`+
+    data.map(x=>{const [c,l]=STATUS_PILL[x.status]||['#64748b',x.status];return `• ${x.data.split('-').reverse().join('/')}${x.hora?' '+x.hora.slice(0,5):''} — ${x.qtd_pessoas}p — ${esc(nCasa(x.casa_id))} <span class="pill" style="background:${c};font-size:11px;padding:1px 7px;">${l}</span>`;}).join('<br>');
+}
+async function saveDet(){
+  const pess=parseInt(document.getElementById('det_pessoas').value,10)||1;
+  const kids=parseInt(document.getElementById('det_kids').value,10)||0;
+  const obs=document.getElementById('det_obs').value.trim()||null;
+  const {error}=await sb.from('reservas').update({qtd_pessoas:pess,qtd_criancas:kids,observacao:obs}).eq('id',detId);
+  if(error){ alert('Erro: '+error.message); return; }
+  await loadReservas();
 }
 
 // ===================== NOVA RESERVA =====================
@@ -443,7 +863,7 @@ function openForm(){
   document.getElementById('f_giro').innerHTML='<option value="">—</option>'+giros.map(g=>`<option value="${g.id}">${g.nome||''} ${g.horario_min.slice(0,5)}-${g.horario_max.slice(0,5)}</option>`).join('');
   document.getElementById('f_data').value=dataSel;
   ['f_nome','f_tel','f_hora','f_cpf','f_nasc','f_email','f_obs'].forEach(i=>document.getElementById(i).value='');
-  document.getElementById('f_qtd').value='2'; document.getElementById('f_passante').checked=false; setText('formErr','');
+  document.getElementById('f_qtd').value='2'; document.getElementById('f_kids').value='0'; document.getElementById('f_passante').checked=false; setText('formErr','');
   show2('formOverlay',true);
 }
 function closeForm(){ show2('formOverlay',false); }
@@ -457,7 +877,7 @@ async function saveReserva(){
   const reserva={ casa_id:casaAtual.id, cliente_id:up.data?up.data.id:null, nome, telefone:tel,
     email:val('f_email')||null, cpf:val('f_cpf')||null, data_nascimento:val('f_nasc')||null,
     data:val('f_data'), hora:val('f_hora')||null, giro_id:val('f_giro')||null, ambiente_id:amb,
-    qtd_pessoas:qtd, confirmacoes_necessarias:qtd, ocasiao:val('f_ocasiao')||null, origem:'painel',
+    qtd_pessoas:qtd, qtd_criancas:parseInt(val('f_kids')||'0',10), confirmacoes_necessarias:qtd, ocasiao:val('f_ocasiao')||null, origem:'painel',
     observacao:val('f_obs')||null, passante:document.getElementById('f_passante').checked,
     status:document.getElementById('f_passante').checked?'checkin':'confirmada' };
   if(reserva.status==='checkin') reserva.checkin_em=new Date().toISOString();
@@ -490,6 +910,7 @@ async function addConvManual(){
   if(!nome){ setText('convErr','Informe o nome.'); return; }
   const {error}=await sb.from('convidados').insert({reserva_id:convReserva.id, casa_id:casaAtual.id, nome, telefone:tel||null, confirmado:true, confirmado_em:new Date().toISOString(), origem:'manual'});
   if(error){ setText('convErr','Erro: '+error.message); return; }
+  if(tel) await sb.from('clientes').upsert({casa_id:casaAtual.id, nome, telefone:tel},{onConflict:'casa_id,telefone'}); // adulto novo já entra no CRM
   document.getElementById('cv_nome').value=''; document.getElementById('cv_tel').value='';
   await renderConv(); loadConvidados().then(renderList);
 }
