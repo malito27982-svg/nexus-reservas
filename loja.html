@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Botequim São Paulo — Delivery</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--bg:#0b0f14;--card:#151b23;--card2:#1d262f;--line:#283443;--txt:#e7eef6;--muted:#8aa0b4;--accent:#7c3aed;--green:#16a34a;--amber:#f59e0b;}
+  *{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,sans-serif;}
+  body{margin:0;background:var(--bg);color:var(--txt);}
+  header{background:var(--card);padding:16px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;}
+  header img{height:40px;border-radius:8px;}
+  h1{font-size:20px;margin:0;}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px;display:grid;grid-template-columns:1fr 340px;gap:18px;}
+  @media(max-width:820px){.wrap{grid-template-columns:1fr;}.cart{position:fixed;bottom:0;left:0;right:0;border-radius:16px 16px 0 0;max-height:60vh;overflow:auto;z-index:9;}}
+  .cat{font-size:18px;font-weight:800;margin:18px 0 8px;color:var(--accent);}
+  .prod{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;gap:12px;align-items:center;}
+  .prod .nome{font-weight:700;} .prod .desc{color:var(--muted);font-size:14px;margin-top:2px;}
+  .prod .preco{font-weight:800;color:var(--green);white-space:nowrap;}
+  button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 14px;font-size:15px;cursor:pointer;font-weight:600;}
+  button:disabled{opacity:.5;cursor:default;}
+  .add{background:var(--green);min-width:40px;}
+  .cart{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;align-self:start;position:sticky;top:90px;}
+  .citem{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px;}
+  .qtybtn{background:var(--card2);padding:2px 9px;min-width:28px;border-radius:8px;}
+  input,select,textarea{width:100%;padding:11px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--txt);font-size:15px;margin-top:6px;}
+  label{font-size:13px;color:var(--muted);}
+  .field{margin-bottom:10px;}
+  .tot{font-size:20px;font-weight:800;margin:10px 0;}
+  .muted{color:var(--muted);} .ok{color:var(--green);}
+  .hidden{display:none;}
+</style>
+</head>
+<body>
+<header>
+  <img src="https://lucasmalito.github.io/nexus-reservas/logo.png" onerror="this.style.display='none'">
+  <div><h1>Botequim São Paulo</h1><div class="muted" id="casaNome" style="font-size:13px;">Delivery</div></div>
+</header>
+
+<div class="wrap">
+  <div id="menu"></div>
+
+  <div class="cart">
+    <h3 style="margin-top:0;">🛒 Seu pedido</h3>
+    <div id="cartItems"><div class="muted">Carrinho vazio. Toque em “+” nos itens.</div></div>
+    <div class="tot" id="tot"></div>
+    <div id="checkout" class="hidden">
+      <div class="field"><label>Seu nome</label><input id="c_nome"></div>
+      <div class="field"><label>WhatsApp</label><input id="c_tel" placeholder="(11) 90000-0000"></div>
+      <div class="field"><label>Endereço de entrega</label><input id="c_end" placeholder="Rua, número, bairro"></div>
+      <div class="field"><label>Complemento / referência</label><input id="c_comp"></div>
+      <div class="field"><label>Pagamento</label>
+        <select id="c_pag">
+          <option value="online">Pix/Cartão online (PagBank)</option>
+          <option value="na_entrega">Pagar na entrega (Pix/dinheiro/maquininha)</option>
+        </select>
+      </div>
+      <div class="field"><label>Observação</label><input id="c_obs" placeholder="Ex: sem cebola, troco pra 50..."></div>
+      <button style="width:100%;" id="btnSend" onclick="enviarPedido()">Fazer pedido</button>
+      <div id="msg" class="muted" style="margin-top:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SB_URL='https://kuyhkltbwlkvtgbabscv.supabase.co';
+const SB_KEY='sb_publishable_dW-JZ00n74dSLCrznBJ6gw_K8AE1VIq';
+const CASA_SLUG=new URLSearchParams(location.search).get('casa')||'botequimsaocaetano';
+const WPP_URL=SB_URL+'/functions/v1/wpp';
+const sb=window.supabase.createClient(SB_URL,SB_KEY);
+let casa=null, cfg=null, produtos=[], cart={};
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const brl=n=>'R$ '+Number(n||0).toFixed(2).replace('.',',');
+
+async function init(){
+  casa=(await sb.from('casas').select('id,nome,nome_curto,slug').eq('slug',CASA_SLUG).maybeSingle()).data;
+  if(!casa){ document.getElementById('menu').innerHTML='<p class="muted">Loja indisponível.</p>'; return; }
+  document.getElementById('casaNome').textContent=(casa.nome_curto||casa.nome)+' · Delivery';
+  cfg=(await sb.from('delivery_config').select('*').eq('casa_id',casa.id).maybeSingle()).data||{taxa_entrega:0};
+  produtos=(await sb.from('delivery_produtos').select('*').eq('casa_id',casa.id).eq('ativo',true).order('ordem')).data||[];
+  renderMenu(); renderCart();
+}
+function renderMenu(){
+  const cats={}; produtos.forEach(p=>{(cats[p.categoria||'Outros']=cats[p.categoria||'Outros']||[]).push(p);});
+  document.getElementById('menu').innerHTML=Object.keys(cats).map(cat=>
+    `<div class="cat">${esc(cat)}</div>`+cats[cat].map(p=>
+      `<div class="prod"><div><div class="nome">${esc(p.nome)}</div><div class="desc">${esc(p.descricao||'')}</div><div class="preco">${brl(p.preco)}</div></div>
+       <button class="add" onclick="addCart('${p.id}')">+</button></div>`).join('')).join('');
+}
+function addCart(id){ cart[id]=(cart[id]||0)+1; renderCart(); }
+function subCart(id){ if(cart[id]){cart[id]--; if(cart[id]<=0)delete cart[id];} renderCart(); }
+function renderCart(){
+  const ids=Object.keys(cart);
+  const ci=document.getElementById('cartItems');
+  if(!ids.length){ ci.innerHTML='<div class="muted">Carrinho vazio. Toque em “+” nos itens.</div>'; document.getElementById('tot').textContent=''; document.getElementById('checkout').classList.add('hidden'); return; }
+  let sub=0;
+  ci.innerHTML=ids.map(id=>{const p=produtos.find(x=>x.id===id);const t=p.preco*cart[id];sub+=t;
+    return `<div class="citem"><div>${esc(p.nome)}</div><div style="display:flex;gap:6px;align-items:center;"><span class="qtybtn" onclick="subCart('${id}')">−</span>${cart[id]}<span class="qtybtn" onclick="addCart('${id}')">+</span><b style="min-width:70px;text-align:right;">${brl(t)}</b></div></div>`;}).join('');
+  const taxa=Number(cfg.taxa_entrega||0);
+  document.getElementById('tot').innerHTML=`Subtotal: ${brl(sub)}<br><span class="muted" style="font-size:14px;">Entrega: ${brl(taxa)}</span><br>Total: <span class="ok">${brl(sub+taxa)}</span>`;
+  document.getElementById('checkout').classList.remove('hidden');
+}
+async function enviarPedido(){
+  const nome=document.getElementById('c_nome').value.trim(), tel=document.getElementById('c_tel').value.trim(), end=document.getElementById('c_end').value.trim();
+  const msg=document.getElementById('msg');
+  if(!nome||!tel||!end){ msg.innerHTML='<span style="color:#f87171">Preencha nome, WhatsApp e endereço.</span>'; return; }
+  const ids=Object.keys(cart); if(!ids.length){ msg.textContent='Carrinho vazio.'; return; }
+  const itens=ids.map(id=>{const p=produtos.find(x=>x.id===id);return {id,nome:p.nome,preco:p.preco,qtd:cart[id]};});
+  const subtotal=itens.reduce((s,i)=>s+i.preco*i.qtd,0), taxa=Number(cfg.taxa_entrega||0), total=subtotal+taxa;
+  const pag=document.getElementById('c_pag').value;
+  document.getElementById('btnSend').disabled=true; msg.textContent='Enviando...';
+  const ins=await sb.from('delivery_pedidos').insert({casa_id:casa.id, cliente_nome:nome, cliente_telefone:tel.replace(/\D/g,''),
+    endereco:end, complemento:document.getElementById('c_comp').value||null, itens, subtotal, taxa, total,
+    pagamento:pag, obs:document.getElementById('c_obs').value||null, status:'novo'}).select('id').single();
+  if(ins.error){ msg.innerHTML='<span style="color:#f87171">Erro: '+esc(ins.error.message)+'</span>'; document.getElementById('btnSend').disabled=false; return; }
+  if(pag==='online'){
+    msg.innerHTML='✅ Pedido registrado! <b>Pagamento online (PagBank) será ativado em breve.</b> Por enquanto a casa confirma o pagamento com você pelo WhatsApp.';
+  } else {
+    msg.innerHTML='✅ <b>Pedido enviado!</b> A cozinha já recebeu. Você paga na entrega. Acompanhe pelo WhatsApp 🙂';
+  }
+  cart={}; renderCart();
+}
+init();
+</script>
+</body>
+</html>
