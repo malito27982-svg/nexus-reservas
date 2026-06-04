@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pesquisa — Botequim São Paulo</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--bg:#0b0f14;--card:#151b23;--card2:#1d262f;--line:#283443;--txt:#e7eef6;--muted:#8aa0b4;--accent:#7c3aed;--green:#16a34a;}
+  *{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,sans-serif;}
+  body{margin:0;background:var(--bg);color:var(--txt);display:flex;justify-content:center;}
+  .wrap{max-width:560px;width:100%;padding:22px;}
+  img{height:46px;border-radius:8px;margin-bottom:8px;}
+  h1{font-size:21px;} .q{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;}
+  .qt{font-weight:700;margin-bottom:10px;}
+  .nps{display:flex;flex-wrap:wrap;gap:6px;}
+  .nps button{width:40px;height:40px;border-radius:9px;border:1px solid var(--line);background:var(--card2);color:var(--txt);cursor:pointer;font-weight:700;}
+  .nps button.sel{background:var(--accent);border-color:var(--accent);}
+  .opt{display:block;width:100%;text-align:left;background:var(--card2);border:1px solid var(--line);color:var(--txt);padding:11px;border-radius:9px;margin-bottom:6px;cursor:pointer;}
+  .opt.sel{background:var(--accent);border-color:var(--accent);}
+  textarea{width:100%;padding:11px;border-radius:9px;border:1px solid var(--line);background:var(--card2);color:var(--txt);font-size:15px;}
+  .send{width:100%;background:var(--green);color:#fff;border:0;border-radius:11px;padding:14px;font-size:17px;font-weight:700;cursor:pointer;margin-top:8px;}
+  .muted{color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><p class="muted">Carregando…</p></div>
+<script>
+const SB_URL='https://kuyhkltbwlkvtgbabscv.supabase.co';
+const SB_KEY='sb_publishable_dW-JZ00n74dSLCrznBJ6gw_K8AE1VIq';
+const sb=window.supabase.createClient(SB_URL,SB_KEY);
+const par=new URLSearchParams(location.search);
+const slug=par.get('p'), respondente=par.get('r')||null;
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let pesquisa=null, resp={};
+
+async function init(){
+  if(!slug){ document.getElementById('app').innerHTML='<p>Link inválido.</p>'; return; }
+  pesquisa=(await sb.from('pesquisas').select('*').eq('slug',slug).eq('ativo',true).maybeSingle()).data;
+  if(!pesquisa){ document.getElementById('app').innerHTML='<p>Pesquisa não encontrada.</p>'; return; }
+  render();
+}
+function render(){
+  const qs=pesquisa.perguntas.map((p,i)=>{
+    let inner='';
+    if(p.t==='nps'){ inner='<div class="nps">'+Array.from({length:11},(_,n)=>`<button id="b_${i}_${n}" onclick="setNps(${i},${n})">${n}</button>`).join('')+'</div>'; }
+    else if(p.t==='escolha'){ inner=(p.opcoes||[]).map((o,j)=>`<button class="opt" id="o_${i}_${j}" onclick="setOpt(${i},'${esc(o)}',${j})">${esc(o)}</button>`).join(''); }
+    else { inner=`<textarea id="t_${i}" rows="3" placeholder="Escreva aqui..." oninput="resp[${i}]=this.value"></textarea>`; }
+    return `<div class="q"><div class="qt">${i+1}. ${esc(p.q)}</div>${inner}</div>`;
+  }).join('');
+  document.getElementById('app').innerHTML=
+    `<img src="https://lucasmalito.github.io/nexus-reservas/logo.png" onerror="this.style.display='none'">
+     <h1>${esc(pesquisa.titulo)}</h1><p class="muted">Leva menos de 1 minuto 🙂</p>${qs}
+     <button class="send" onclick="enviar()">Enviar resposta</button><div id="msg" class="muted" style="margin-top:10px;"></div>`;
+}
+function setNps(i,n){ resp[i]=n; pesquisa.perguntas[i].opcoes; for(let k=0;k<=10;k++){const b=document.getElementById('b_'+i+'_'+k); if(b)b.classList.toggle('sel',k===n);} }
+function setOpt(i,o,j){ resp[i]=o; (pesquisa.perguntas[i].opcoes||[]).forEach((_,k)=>{const b=document.getElementById('o_'+i+'_'+k); if(b)b.classList.toggle('sel',k===j);}); }
+async function enviar(){
+  const npsIdx=pesquisa.perguntas.findIndex(p=>p.t==='nps');
+  const nps=npsIdx>=0?(resp[npsIdx]??null):null;
+  const respostas=pesquisa.perguntas.map((p,i)=>({pergunta:p.q,resposta:resp[i]??null}));
+  const {error}=await sb.from('pesquisa_respostas').insert({pesquisa_id:pesquisa.id,respondente,respostas,nps});
+  const msg=document.getElementById('msg');
+  if(error){ msg.innerHTML='<span style="color:#f87171">Erro ao enviar: '+esc(error.message)+'</span>'; return; }
+  document.getElementById('app').innerHTML='<img src="https://lucasmalito.github.io/nexus-reservas/logo.png" onerror="this.style.display=\'none\'"><h1>Obrigado! 🍻</h1><p class="muted">Sua resposta foi registrada. Agradecemos demais o seu tempo!</p>';
+}
+init();
+</script>
+</body>
+</html>
