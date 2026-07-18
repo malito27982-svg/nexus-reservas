@@ -1,0 +1,13 @@
+{
+  "name": "evolution-robot",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Recebedor de webhook da Evolution API — robo de reserva do Botequim (v1: responde saudacao)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

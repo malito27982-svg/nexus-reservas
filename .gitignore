@@ -6,3 +6,7 @@ supabase/
 .env.*
 node_modules/
 *.log
+
+# sessao do WhatsApp (Baileys) e pasta de teste local — NUNCA versionar
+**/auth/
+wpp-qr-test/
