@@ -1,13 +1,14 @@
 {
   "name": "evolution-robot",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
-  "description": "Recebedor de webhook da Evolution API — robo de reserva do Botequim (v1: responde saudacao)",
+  "description": "Robo de reserva do Botequim — Evolution API + Claude + Supabase (fluxo de reserva)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "@supabase/supabase-js": "^2.45.4"
   }
 }
