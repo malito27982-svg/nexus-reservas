@@ -87,65 +87,44 @@
 // No seu PC de teste, se ja usou o tablet neste navegador, ele pega sozinho do navegador.
 const CONFIG = { url:'https://kuyhkltbwlkvtgbabscv.supabase.co', key:'sb_publishable_dW-JZ00n74dSLCrznBJ6gw_K8AE1VIq' };
 
-let sb=null, reserva=null, casaId=null;
+let sb=null, reserva=null, token=null;
 
 window.addEventListener('DOMContentLoaded', init);
 async function init(){
-  const url = CONFIG.url || localStorage.getItem('sb_url');
-  const key = CONFIG.key || localStorage.getItem('sb_key');
-  const token = new URLSearchParams(location.search).get('t');
-  if(!url||!key){ show('cfgerr'); return; }
+  token = new URLSearchParams(location.search).get('t');
+  if(!CONFIG.url||!CONFIG.key){ show('cfgerr'); return; }
   if(!token){ document.getElementById('loading').innerHTML='<div class="sub">Link inválido (sem código).</div>'; return; }
-  sb = window.supabase.createClient(url,key);
-
-  const {data,error} = await sb.from('reservas')
-    .select('id,nome,data,hora,qtd_pessoas,confirmacoes_necessarias,flyer_url,casa_id,casas(nome,endereco),ambientes(nome)')
-    .eq('token',token).maybeSingle();
-  if(error||!data){ document.getElementById('loading').innerHTML='<div class="sub">Convite não encontrado.</div>'; return; }
-  reserva=data; casaId=data.casa_id;
+  sb = window.supabase.createClient(CONFIG.url,CONFIG.key);
+  // lê SÓ a reserva desse token (função segura no banco; não expõe outros dados)
+  const {data,error} = await sb.rpc('reserva_por_token',{p_token:token});
+  if(error||!data||!data.id){ document.getElementById('loading').innerHTML='<div class="sub">Convite não encontrado.</div>'; return; }
+  reserva=data;
   renderHero();
   show('content');
 }
 
 function renderHero(){
   const r=reserva;
-  const casa=r.casas?r.casas.nome:'';
-  const amb=r.ambientes?r.ambientes.nome:'';
+  const casa=r.casa_nome||'';
+  const amb=r.ambiente_nome||'';
   document.getElementById('titulo').textContent = `Reserva de ${r.nome}`;
   const d=new Date(r.data+'T12:00:00');
   const dias=['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
   const dataFmt=`${dias[d.getDay()]}, ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
   document.getElementById('detalhes').innerHTML =
-    `${casa}<br>${dataFmt}${r.hora?' às '+r.hora.slice(0,5):''}${amb?'<br>Setor: '+amb:''}`;
-  document.getElementById('casaConsent').textContent = casa;
+    `${casa}<br>${dataFmt}${r.hora?' às '+String(r.hora).slice(0,5):''}${amb?'<br>Setor: '+amb:''}`;
+  document.getElementById('casaConsent').textContent = casa||'estabelecimento';
   if(r.flyer_url){ const f=document.getElementById('flyer'); f.src=r.flyer_url; f.classList.remove('hidden'); }
-  refreshProg();
+  renderProg(r.confirmados||0);
 }
-async function refreshProg(){
-  const {count}=await sb.from('convidados').select('id',{count:'exact',head:true})
-    .eq('reserva_id',reserva.id).eq('confirmado',true);
-  const conf = 1 + (count||0); // +1 = o anfitriao
+function renderProg(conf0){
+  const conf = 1 + (conf0||0); // +1 = o anfitrião
   const meta = reserva.confirmacoes_necessarias || reserva.qtd_pessoas;
   document.getElementById('prog').innerHTML =
     `✅ ${conf} de ${meta} confirmados<br><span style="font-weight:400;color:var(--muted);font-size:14px">Todos precisam confirmar pra reserva valer.</span>`;
 }
 
-// ===== Autofill via CRM =====
-['cpf','email','tel'].forEach(id=>{
-  document.addEventListener('DOMContentLoaded',()=>{
-    const el=document.getElementById(id);
-    if(el) el.addEventListener('blur',()=>autofill(id));
-  });
-});
-async function autofill(byField){
-  const map={cpf:'cpf',email:'email',tel:'telefone'};
-  const v=val(byField).trim(); if(!v) return;
-  const {data}=await sb.from('clientes').select('*').eq('casa_id',casaId).eq(map[byField],v).maybeSingle();
-  if(!data) return;
-  fillIfEmpty('nome',data.nome); fillIfEmpty('tel',data.telefone);
-  fillIfEmpty('cpf',data.cpf); fillIfEmpty('email',data.email); fillIfEmpty('nasc',data.data_nascimento);
-}
-function fillIfEmpty(id,v){ const el=document.getElementById(id); if(el && !el.value && v){ el.value=v; el.classList.add('filled'); } }
+// (autofill por CRM REMOVIDO — expunha dados de clientes pela chave pública. Cada convidado preenche o seu.)
 
 // ===== Menor de 18 =====
 function toggleMenor(){
@@ -158,43 +137,20 @@ async function confirmar(){
   const menor=document.getElementById('menor').checked;
   const nome=val('nome').trim();
   if(!nome){ setText('err','Preencha o nome.'); return; }
-
-  // --- menor de 18: so o nome ---
-  if(menor){
-    const now2=new Date().toISOString();
-    const {error}=await sb.from('convidados').insert({reserva_id:reserva.id, casa_id:casaId, nome,
-      menor:true, confirmado:true, confirmado_em:now2, consent:false, origem:'link'});
-    if(error){ setText('err','Erro: '+error.message); return; }
-    return finalizar();
+  const args={ p_token:token, p_nome:nome, p_menor:menor };
+  if(!menor){
+    const tel=val('tel').trim();
+    if(!tel){ setText('err','Preencha o WhatsApp.'); return; }
+    if(!document.getElementById('consent').checked){ setText('err','Você precisa autorizar pra confirmar.'); return; }
+    args.p_tel=tel; args.p_email=val('email')||null; args.p_cpf=val('cpf')||null; args.p_nasc=val('nasc')||null; args.p_consent=true;
   }
-
-  const tel=val('tel').trim();
-  if(!tel){ setText('err','Preencha o WhatsApp.'); return; }
-  if(!document.getElementById('consent').checked){ setText('err','Você precisa autorizar pra confirmar.'); return; }
-  const now=new Date().toISOString();
-  const dados={casa_id:casaId, nome, telefone:tel,
-    email:val('email')||null, cpf:val('cpf')||null, data_nascimento:val('nasc')||null,
-    consent:true, consent_em:now};
-  const up=await sb.from('clientes').upsert(dados,{onConflict:'casa_id,telefone'}).select('id').single();
-  const cliente_id=up.data?up.data.id:null;
-
-  // evita duplicar o mesmo convidado (mesmo telefone na mesma reserva)
-  const ex=await sb.from('convidados').select('id').eq('reserva_id',reserva.id).eq('telefone',tel).maybeSingle();
-  const conv={reserva_id:reserva.id, casa_id:casaId, cliente_id, nome, telefone:tel,
-    email:val('email')||null, cpf:val('cpf')||null, data_nascimento:val('nasc')||null,
-    confirmado:true, confirmado_em:now, consent:true, consent_em:now, origem:'link'};
-  let error;
-  if(ex.data){ ({error}=await sb.from('convidados').update(conv).eq('id',ex.data.id)); }
-  else { ({error}=await sb.from('convidados').insert(conv)); }
+  setText('err','Confirmando...');
+  // grava pela função segura (valida o token no banco)
+  const {data,error}=await sb.rpc('confirmar_convidado',args);
   if(error){ setText('err','Erro: '+error.message); return; }
-  return finalizar();
-}
-async function finalizar(){
-  const {count}=await sb.from('convidados').select('id',{count:'exact',head:true})
-    .eq('reserva_id',reserva.id).eq('confirmado',true);
-  const conf=1+(count||0), meta=reserva.confirmacoes_necessarias||reserva.qtd_pessoas;
+  if(!data || !data.ok){ setText('err',(data&&data.erro)||'Não consegui confirmar.'); return; }
   document.getElementById('successMsg').innerHTML =
-    `Você é o nº <b>${conf}</b> de <b>${meta}</b> confirmados.<br>Obrigado! Avise quem ainda não confirmou. 🙌`;
+    `Você é o nº <b>${data.confirmados}</b> de <b>${data.meta}</b> confirmados.<br>Obrigado! Avise quem ainda não confirmou. 🙌`;
   show('success');
 }
 
