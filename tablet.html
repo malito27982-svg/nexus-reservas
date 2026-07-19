@@ -101,6 +101,16 @@
   <button onclick="saveSetup()">Conectar</button>
 </div>
 
+<!-- ================= LOGIN ================= -->
+<div id="login" class="setup hidden">
+  <h1>🍻 Painel Botequim</h1>
+  <p>Entre com seu acesso para ver reservas, conversas e atendimento.</p>
+  <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@grupobotequim.com.br" autocomplete="username"></div>
+  <div class="field"><label>Senha</label><input id="loginPass" type="password" placeholder="sua senha" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+  <div class="err" id="loginErr"></div>
+  <button onclick="doLogin()">Entrar</button>
+</div>
+
 <!-- ================= APP ================= -->
 <div id="app" class="hidden">
   <header>
@@ -385,13 +395,22 @@ const SB_URL_DEFAULT='https://kuyhkltbwlkvtgbabscv.supabase.co';
 const SB_KEY_DEFAULT='sb_publishable_dW-JZ00n74dSLCrznBJ6gw_K8AE1VIq';
 async function init(){
   const url=localStorage.getItem('sb_url')||SB_URL_DEFAULT, key=localStorage.getItem('sb_key')||SB_KEY_DEFAULT;
-  if(!url||!key){ show('setup'); return; }
-  connect(url,key);
+  try{ sb=window.supabase.createClient(url,key,{auth:{persistSession:true,autoRefreshToken:true}}); }
+  catch(e){ show('login'); setText('loginErr','Erro ao conectar: '+e.message); return; }
+  const { data:{ session } }=await sb.auth.getSession();
+  if(session){ show('app'); bootstrap(); } else { show('login'); }
 }
-function connect(url,key){
-  try{ sb=window.supabase.createClient(url,key); show('app'); bootstrap(); }
-  catch(e){ show('setup'); setText('setupErr','Erro: '+e.message); }
+async function doLogin(){
+  setText('loginErr','');
+  const email=(document.getElementById('loginEmail').value||'').trim();
+  const password=document.getElementById('loginPass').value||'';
+  if(!email||!password){ setText('loginErr','Preencha e-mail e senha.'); return; }
+  const { error }=await sb.auth.signInWithPassword({ email, password });
+  if(error){ setText('loginErr','E-mail ou senha inválidos.'); return; }
+  show('app'); bootstrap();
 }
+async function doLogout(){ try{ await sb.auth.signOut(); }catch(e){} location.reload(); }
+function connect(url,key){ try{ sb=window.supabase.createClient(url,key,{auth:{persistSession:true}}); show('login'); }catch(e){ setText('loginErr','Erro: '+e.message);} }
 async function bootstrap(){
   const {data,error}=await sb.from('casas').select('*').eq('ativo',true).order('nome');
   if(error){ alert('Erro ao ler casas: '+error.message+'\n\nJá rodou o SQL no Supabase?'); return; }
@@ -497,8 +516,7 @@ async function aprovarInfo(id){ await sb.from('casa_infos').update({status:'apro
 async function delInfo(id){ if(!confirm('Remover esta informação?'))return; await sb.from('casa_infos').delete().eq('id',id); loadIA(); }
 
 // ===================== CONVERSAS (atendimento + takeover humano) =====================
-const WPP_URL='https://kuyhkltbwlkvtgbabscv.supabase.co/functions/v1/wpp';
-const PANEL_SECRET='nexuspainel2026';
+const ROBOT_URL='https://evolution-robot-production.up.railway.app';
 let convFiltro='todas', convAtual=null, convPoll=null, atendPoll=null;
 
 async function loadConversas(){
@@ -647,9 +665,15 @@ async function refreshAtend(){
 }
 function closeAtend(){ document.getElementById('atendOverlay').classList.add('hidden'); if(atendPoll){clearInterval(atendPoll);atendPoll=null;} convAtual=null; loadConversas(); }
 async function painel(op,extra){
-  const body=Object.assign({op,casa_id:casaAtual.id,telefone:convAtual.telefone,secret:PANEL_SECRET},extra||{});
-  try{ const r=await fetch(WPP_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return await r.json(); }
-  catch(e){ return {ok:false,erro:String(e)}; }
+  const tel=convAtual.telefone;
+  if(op==='painel_assumir'){ const {error}=await sb.from('conversas').update({handoff:true}).eq('casa_id',casaAtual.id).eq('telefone',tel); return {ok:!error,erro:error&&error.message}; }
+  if(op==='painel_devolver'){ const {error}=await sb.from('conversas').update({handoff:false}).eq('casa_id',casaAtual.id).eq('telefone',tel); return {ok:!error,erro:error&&error.message}; }
+  if(op==='painel_send'){
+    const { data:{ session } }=await sb.auth.getSession();
+    try{ const r=await fetch(ROBOT_URL+'/painel/send',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((session&&session.access_token)||'')},body:JSON.stringify({casa_id:casaAtual.id,telefone:tel,texto:(extra&&extra.texto)||''})}); return await r.json(); }
+    catch(e){ return {ok:false,erro:String(e)}; }
+  }
+  return {ok:false,erro:'op desconhecida'};
 }
 async function assumir(){ await painel('painel_assumir'); await refreshAtend(); }
 async function devolver(){ await painel('painel_devolver'); await refreshAtend(); }
@@ -809,7 +833,9 @@ async function setStatus(id,st){
 async function enviarPesquisa(id){
   const r=reservas.find(x=>x.id===id); if(!r||!r.telefone) return;
   const link='https://lucasmalito.github.io/nexus-reservas/pesquisa.html?p=cli-'+casaAtual.slug+'&r='+encodeURIComponent(r.telefone);
-  try{ await fetch(WPP_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'painel_send',casa_id:casaAtual.id,telefone:r.telefone,secret:PANEL_SECRET,texto:'Oi '+(r.nome||'')+'! Que bom ter você no '+(casaAtual.nome_curto||casaAtual.nome)+' hoje 🍻 Sua opinião vale muito pra gente — responde rapidinho? '+link})}); }catch(e){}
+  const texto='Oi '+(r.nome||'')+'! Que bom ter você no '+(casaAtual.nome_curto||casaAtual.nome)+' hoje 🍻 Sua opinião vale muito pra gente — responde rapidinho? '+link;
+  try{ const { data:{ session } }=await sb.auth.getSession();
+    await fetch(ROBOT_URL+'/painel/send',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((session&&session.access_token)||'')},body:JSON.stringify({casa_id:casaAtual.id,telefone:r.telefone,texto})}); }catch(e){}
 }
 
 // ===================== DETALHE DA RESERVA =====================
@@ -1004,7 +1030,7 @@ function saveSetup(){
 }
 function openSetup(){ document.getElementById('suUrl').value=localStorage.getItem('sb_url')||''; document.getElementById('suKey').value=localStorage.getItem('sb_key')||''; show('setup'); }
 function tempoDecorrido(iso){ if(!iso) return '—'; const min=Math.max(0,Math.round((Date.now()-new Date(iso).getTime())/60000)); return min<60?min+'min':Math.floor(min/60)+'h'+String(min%60).padStart(2,'0'); }
-function show(which){ document.getElementById('setup').classList.toggle('hidden',which!=='setup'); document.getElementById('app').classList.toggle('hidden',which!=='app'); }
+function show(which){ document.getElementById('setup').classList.toggle('hidden',which!=='setup'); document.getElementById('app').classList.toggle('hidden',which!=='app'); document.getElementById('login').classList.toggle('hidden',which!=='login'); }
 function show2(id,on){ document.getElementById(id).classList.toggle('hidden',!on); }
 function val(id){ return document.getElementById(id).value; }
 function setText(id,t){ document.getElementById(id).textContent=t; }
