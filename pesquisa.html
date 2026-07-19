@@ -36,8 +36,9 @@ let pesquisa=null, resp={};
 
 async function init(){
   if(!slug){ document.getElementById('app').innerHTML='<p>Link inválido.</p>'; return; }
-  pesquisa=(await sb.from('pesquisas').select('*').eq('slug',slug).eq('ativo',true).maybeSingle()).data;
-  if(!pesquisa){ document.getElementById('app').innerHTML='<p>Pesquisa não encontrada.</p>'; return; }
+  const {data}=await sb.rpc('pesquisa_por_slug',{p_slug:slug});
+  pesquisa=data;
+  if(!pesquisa||!pesquisa.id){ document.getElementById('app').innerHTML='<p>Pesquisa não encontrada.</p>'; return; }
   render();
 }
 function render(){
@@ -59,9 +60,9 @@ async function enviar(){
   const npsIdx=pesquisa.perguntas.findIndex(p=>p.t==='nps');
   const nps=npsIdx>=0?(resp[npsIdx]??null):null;
   const respostas=pesquisa.perguntas.map((p,i)=>({pergunta:p.q,resposta:resp[i]??null}));
-  const {error}=await sb.from('pesquisa_respostas').insert({pesquisa_id:pesquisa.id,respondente,respostas,nps});
+  const {data,error}=await sb.rpc('responder_pesquisa',{p_slug:slug,p_respondente:respondente,p_respostas:respostas,p_nps:nps});
   const msg=document.getElementById('msg');
-  if(error){ msg.innerHTML='<span style="color:#f87171">Erro ao enviar: '+esc(error.message)+'</span>'; return; }
+  if(error||!data||!data.ok){ msg.innerHTML='<span style="color:#f87171">Erro ao enviar: '+esc((error&&error.message)||(data&&data.erro)||'')+'</span>'; return; }
   document.getElementById('app').innerHTML='<img src="https://lucasmalito.github.io/nexus-reservas/logo.png" onerror="this.style.display=\'none\'"><h1>Obrigado! 🍻</h1><p class="muted">Sua resposta foi registrada. Agradecemos demais o seu tempo!</p>';
 }
 init();

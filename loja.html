@@ -74,11 +74,10 @@ const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;
 const brl=n=>'R$ '+Number(n||0).toFixed(2).replace('.',',');
 
 async function init(){
-  casa=(await sb.from('casas').select('id,nome,nome_curto,slug').eq('slug',CASA_SLUG).maybeSingle()).data;
-  if(!casa){ document.getElementById('menu').innerHTML='<p class="muted">Loja indisponível.</p>'; return; }
+  const {data,error}=await sb.rpc('loja_cardapio',{p_slug:CASA_SLUG});
+  if(error||!data||!data.casa){ document.getElementById('menu').innerHTML='<p class="muted">Loja indisponível.</p>'; return; }
+  casa=data.casa; cfg=data.config||{taxa_entrega:0}; produtos=data.produtos||[];
   document.getElementById('casaNome').textContent=(casa.nome_curto||casa.nome)+' · Delivery';
-  cfg=(await sb.from('delivery_config').select('*').eq('casa_id',casa.id).maybeSingle()).data||{taxa_entrega:0};
-  produtos=(await sb.from('delivery_produtos').select('*').eq('casa_id',casa.id).eq('ativo',true).order('ordem')).data||[];
   renderMenu(); renderCart();
 }
 function renderMenu(){
@@ -111,14 +110,13 @@ async function enviarPedido(){
   const subtotal=itens.reduce((s,i)=>s+i.preco*i.qtd,0), taxa=Number(cfg.taxa_entrega||0), pct=Number(cfg.desconto_pct||0), desconto=Math.round(subtotal*pct)/100, total=subtotal-desconto+taxa;
   const pag=document.getElementById('c_pag').value;
   document.getElementById('btnSend').disabled=true; msg.textContent='Enviando...';
-  const ins=await sb.from('delivery_pedidos').insert({casa_id:casa.id, cliente_nome:nome, cliente_telefone:tel.replace(/\D/g,''),
-    endereco:end, complemento:document.getElementById('c_comp').value||null, itens, subtotal, desconto, taxa, total,
-    pagamento:pag, obs:document.getElementById('c_obs').value||null, status:'novo'}).select('id').single();
-  if(ins.error){ msg.innerHTML='<span style="color:#f87171">Erro: '+esc(ins.error.message)+'</span>'; document.getElementById('btnSend').disabled=false; return; }
+  // grava pela função segura (recalcula o total no servidor, não confia no preço do cliente)
+  const {data:ped,error:perr}=await sb.rpc('criar_pedido_delivery',{p_slug:CASA_SLUG, p_nome:nome, p_tel:tel, p_end:end, p_comp:document.getElementById('c_comp').value||null, p_itens:itens, p_pag:pag, p_obs:document.getElementById('c_obs').value||null});
+  if(perr||!ped||!ped.ok){ msg.innerHTML='<span style="color:#f87171">Erro: '+esc((perr&&perr.message)||(ped&&ped.erro)||'não consegui enviar')+'</span>'; document.getElementById('btnSend').disabled=false; return; }
   if(pag==='online'){
     msg.textContent='Gerando o pagamento...';
     try{
-      const r=await fetch(SB_URL+'/functions/v1/pagbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'criar',pedido_id:ins.data.id})});
+      const r=await fetch(SB_URL+'/functions/v1/pagbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'criar',pedido_id:ped.pedido_id})});
       const d=await r.json();
       if(d&&d.link){ cart={}; window.location.href=d.link; return; }
       msg.innerHTML='✅ Pedido criado, mas não consegui gerar o pagamento agora. A casa confirma com você pelo WhatsApp.';
