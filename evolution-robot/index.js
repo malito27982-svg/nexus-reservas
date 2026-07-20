@@ -64,13 +64,18 @@ async function baixarMidiaB64(dataMsg) {
 
 // ===================== CASA / CONVERSA =====================
 const CASA_COLS = 'id,nome,slug,nome_curto'
-let _casa = null
-async function getCasa() {
-  if (_casa) return _casa
+// 1 WhatsApp por unidade (spec Lucas 20/07): CASA_MAP = {"nome-da-instancia":"slug-da-casa"}
+// A instância que chega no webhook decide a casa; CASA_SLUG segue como fallback.
+const CASA_MAP = (() => { try { return JSON.parse(process.env.CASA_MAP || '{}') } catch { return {} } })()
+const _casas = {}
+async function getCasa(slug) {
+  const efetivo = slug || CASA_SLUG
+  const k = efetivo || '_default'
+  if (_casas[k]) return _casas[k]
   let q = sb.from('casas').select(CASA_COLS)
-  q = CASA_SLUG ? q.eq('slug', CASA_SLUG) : q.eq('ativo', true)
-  _casa = (await q.limit(1).maybeSingle()).data
-  return _casa
+  q = efetivo ? q.eq('slug', efetivo) : q.eq('ativo', true)
+  _casas[k] = (await q.limit(1).maybeSingle()).data
+  return _casas[k]
 }
 async function getConversa(casa_id, telefone) {
   const ex = (await sb.from('conversas').select('*').eq('casa_id', casa_id).eq('telefone', telefone).maybeSingle()).data
@@ -91,16 +96,17 @@ async function avisarGerente(casa, from, motivo) {
 }
 
 // ===================== MENU (texto) =====================
-const MENU_TXT = (nome) => `Olá! 👋 Seja bem-vindo(a) ao *${nome}*. Como posso te ajudar? Responda com o *número*:\n\n1️⃣ Reservas\n2️⃣ Cardápio\n3️⃣ Delivery\n4️⃣ Dúvidas (horários, endereço, eventos...)\n5️⃣ Reclamações\n6️⃣ Minhas reservas\n7️⃣ Falar com atendente`
+// Delivery DESATIVADO no menu em 19/07/2026 (go-live começa só com reservas; religar = voltar a opção + o intent)
+const MENU_TXT = (nome) => `Olá! 👋 Seja bem-vindo(a) ao *${nome}*. Como posso te ajudar? Responda com o *número*:\n\n1️⃣ Reservas\n2️⃣ Cardápio\n3️⃣ Dúvidas (horários, endereço, eventos...)\n4️⃣ Reclamações\n5️⃣ Minhas reservas\n6️⃣ Falar com atendente`
 function intentDoTexto(t) {
   const s = t.trim().toLowerCase()
   if (/^1\b|reserva/.test(s)) return 'reservas'
   if (/^2\b|card[aá]pio|menu do bar/.test(s)) return 'cardapio'
-  if (/^3\b|deliver/.test(s)) return 'delivery'
-  if (/^4\b|d[uú]vida/.test(s)) return 'duvidas'
-  if (/^5\b|reclama/.test(s)) return 'reclamacoes'
-  if (/^6\b|minhas reserva/.test(s)) return 'minhas'
-  if (/^7\b|atendente|humano|gerente/.test(s)) return 'atendente'
+  if (/deliver/.test(s)) return 'delivery_off'
+  if (/^3\b|d[uú]vida/.test(s)) return 'duvidas'
+  if (/^4\b|reclama/.test(s)) return 'reclamacoes'
+  if (/^5\b|minhas reserva/.test(s)) return 'minhas'
+  if (/^6\b|atendente|humano|gerente/.test(s)) return 'atendente'
   return null
 }
 
@@ -140,7 +146,7 @@ async function criarReserva(casa, from, input) {
   const { nome, data, hora, pessoas, setor, cpf, email, nascimento } = input
   if (pessoas > 49) {
     await upConversa(casa.id, from, { handoff: true })
-    await sendText(from, `Que ótimo, um grupo grande! 🎉 Como é bastante gente, fazemos um *atendimento personalizado*. O responsável do *${casa.nome_curto ?? casa.nome}* já vai falar com você por aqui. 🙌`)
+    await sendText(from, `Que ótimo, um grupo grande! 🎉 Como é bastante gente, fazemos um *atendimento personalizado*. O responsável do *${casa.nome}* já vai falar com você por aqui. 🙌`)
     await avisarGerente(casa, from, `quer reservar para ${pessoas} pessoas (GRUPO GRANDE +49)`)
     return { ok: false, grupo_grande: true, mensagem: 'Handoff grupo grande. NÃO confirme.' }
   }
@@ -175,10 +181,10 @@ ${ambientes.map((a) => `- ${a.nome}: ${a.capacidade_min_reserva} a ${a.capacidad
 HORÁRIOS variam por dia — NUNCA invente, use consultar_disponibilidade.
 EVENTOS: se vier "evento", avise com entusiasmo (título, descrição, menu/preço).
 ${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}
-REGRAS: precisa de nome, data, horário, pessoas, setor + CPF(opcional), e-mail e nascimento. Avise LGPD 1x. Nascimento dd/mm/aaaa (converta p/ AAAA-MM-DD ao criar). SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Confirme o resumo e SÓ DEPOIS chame criar_reserva.` }]
+REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Confirme o resumo e SÓ DEPOIS chame criar_reserva.` }]
   const tools = [
     { name: 'consultar_disponibilidade', description: 'Verifica data aberta e setores que comportam as pessoas.', input_schema: { type: 'object', properties: { data: { type: 'string' }, pessoas: { type: 'integer' } }, required: ['data', 'pessoas'] } },
-    { name: 'criar_reserva', description: 'Cria a reserva. Só quando o cliente confirmar.', input_schema: { type: 'object', properties: { nome: { type: 'string' }, data: { type: 'string' }, hora: { type: 'string' }, pessoas: { type: 'integer' }, setor: { type: 'string' }, cpf: { type: 'string' }, email: { type: 'string' }, nascimento: { type: 'string' } }, required: ['nome', 'data', 'pessoas', 'setor'] } },
+    { name: 'criar_reserva', description: 'Cria a reserva. Só quando o cliente confirmar.', input_schema: { type: 'object', properties: { nome: { type: 'string' }, data: { type: 'string' }, hora: { type: 'string' }, pessoas: { type: 'integer' }, setor: { type: 'string' }, nascimento: { type: 'string', description: 'data de nascimento AAAA-MM-DD (obrigatória)' } }, required: ['nome', 'data', 'pessoas', 'setor', 'nascimento'] } },
   ]
   return claudeLoop(system, tools, history, async (name, inp) => {
     if (name === 'consultar_disponibilidade') return consultarDisponibilidade(casa, inp)
@@ -192,7 +198,7 @@ async function runDeliveryAgent(casa, from, history) {
   const cats = (await sb.from('delivery_produtos').select('categoria,nome,preco').eq('casa_id', casa.id).eq('ativo', true).order('ordem')).data ?? []
   const lista = cats.map((p) => `- ${p.nome} (R$ ${Number(p.preco).toFixed(2)})${p.categoria ? ' [' + p.categoria + ']' : ''}`).join('\n')
   const system = [{ type: 'text', cache_control: { type: 'ephemeral' }, text:
-`Você é o atendente de DELIVERY do ${casa.nome_curto ?? casa.nome}, no WhatsApp. Cordial, breve, poucos emojis. Monte o pedido inteiro pela conversa.
+`Você é o atendente de DELIVERY do ${casa.nome}, no WhatsApp. Cordial, breve, poucos emojis. Monte o pedido inteiro pela conversa.
 FLUXO: 1) Peça o CEP; quando mandar, chame buscar_cep, confirme rua/bairro/cidade e peça número+complemento. 2) chame calcular_entrega com o endereço completo; informe a TAXA e o tempo. Se atende=false, peça desculpas. 3) Convide a escolher pelo cardápio (PDF) e avise que pode pedir FOTO de qualquer prato (foto_prato). 4) adicionar_item/remover_item; a cada mudança confirme com ver_carrinho (subtotal, desconto, total). 5) ao confirmar, pergunte pagamento (na entrega ou online) e nome, e chame finalizar_pedido.
 CARDÁPIO (use exatamente estes nomes/preços):
 ${lista}
@@ -373,7 +379,7 @@ app.post('/webhook', async (req, res) => {
     const texto = extrairTexto(d.message)
     console.log(`💬 ${d.pushName || from}: ${isImage ? '[imagem] ' : ''}${texto || ''}`)
 
-    const casa = await getCasa()
+    const casa = await getCasa(CASA_MAP[body.instance])
     if (!casa) { console.error('!! casa não encontrada'); return }
     const conv = await getConversa(casa.id, from)
     await gravaNome(casa.id, from, d.pushName || null)
@@ -395,6 +401,12 @@ app.post('/webhook', async (req, res) => {
     }
     if (isImage) { await sendText(from, 'Recebi sua foto 🙂 Me conta por texto: pra quantas pessoas, que dia e horário?'); return }
     if (!texto.trim()) { await sendText(from, 'Por enquanto eu entendo texto e fotos 🙂'); return }
+
+    // saudação isolada SEMPRE reseta pro menu — roda ANTES de qualquer fluxo pendente (flyer/delivery/velho histórico)
+    if (/^(menu|voltar|in[ií]cio|inicio|come[çc]ar|recome[çc]ar|oi+|ol[aá]|bom dia|boa tarde|boa noite|opa|eae|e a[ií])\s*[!.?]*$/i.test(texto.trim())) {
+      await upConversa(casa.id, from, { modo: null, aguardando: 'menu', historico: [], saudou: true, flyer_etapa: null, flyer_feedback: false, flyer_count: 0, flyer_ocasiao: null })
+      await sendText(from, MENU_TXT(casa.nome)); return
+    }
 
     // ---- fluxo do flyer (texto) ----
     if (conv.flyer_etapa === 'ocasiao') {
@@ -434,12 +446,12 @@ app.post('/webhook', async (req, res) => {
     // ---- pediu atendente ----
     if (/atendente|humano|especialista|pessoa de verdade|falar com (algu[eé]m|uma pessoa|um humano|a gente|gerente)/i.test(texto) || intentDoTexto(texto) === 'atendente') {
       await upConversa(casa.id, from, { handoff: true })
-      await sendText(from, `Claro! 🙂 Só um instante — um atendente do *${casa.nome_curto ?? casa.nome}* vai continuar por aqui. Pode escrever sua mensagem.`)
+      await sendText(from, `Claro! 🙂 Só um instante — um atendente do *${casa.nome}* vai continuar por aqui. Pode escrever sua mensagem.`)
       await avisarGerente(casa, from, 'pediu para falar com um atendente'); return
     }
 
     // ---- menu / recomeço ----
-    if (/^(menu|voltar|in[ií]cio|inicio|come[çc]ar|recome[çc]ar)\b/i.test(texto.trim())) { await upConversa(casa.id, from, { modo: null, aguardando: null, historico: [] }); await sendText(from, MENU_TXT(casa.nome_curto ?? casa.nome)); return }
+    // (reset por saudação movido pra ANTES dos fluxos de flyer/delivery — ver acima)
 
     const history = Array.isArray(conv.historico) ? conv.historico : []
     const menuMode = conv.aguardando === 'menu' || (!conv.saudou && history.length === 0)
@@ -447,13 +459,14 @@ app.post('/webhook', async (req, res) => {
     // 1a mensagem sem pedido claro -> mostra o menu e espera a escolha
     if (!conv.saudou && history.length === 0 && !intentDoTexto(texto) && !/reserv|mesa|\d+\s*pessoa|delivery|pedid|d[uú]vida/i.test(texto)) {
       await upConversa(casa.id, from, { saudou: true, aguardando: 'menu' })
-      await sendText(from, MENU_TXT(casa.nome_curto ?? casa.nome)); return
+      await sendText(from, MENU_TXT(casa.nome)); return
     }
 
     // escolha do menu (por número 1-7 ou palavra), só quando estamos esperando a escolha
     const intent = menuMode ? intentDoTexto(texto) : null
     if (intent === 'cardapio') { await upConversa(casa.id, from, { saudou: true, aguardando: null }); await enviarPdfCardapio(casa, from); return }
-    if (intent === 'delivery') { await upConversa(casa.id, from, { saudou: true, aguardando: null, modo: 'delivery', deliv_carrinho: [], deliv_endereco: null, deliv_taxa: null, deliv_km: null, historico: [] }); await sendText(from, `🛵 Vamos montar seu *delivery do ${casa.nome_curto ?? casa.nome}*!\n\n${await promoDelivery(casa.id)}Me manda seu *CEP* 📍 que eu puxo seu endereço.`); return }
+    // Delivery desativado 19/07/2026 — quem pedir recebe aviso simpático (religar: restaurar o handler antigo do intent 'delivery')
+    if (intent === 'delivery_off') { await upConversa(casa.id, from, { saudou: true, aguardando: 'menu' }); await sendText(from, `Por enquanto estamos atendendo *reservas e dúvidas* por aqui 🙂 Delivery em breve!\n\n${MENU_TXT(casa.nome)}`); return }
     if (intent === 'reclamacoes') { await upConversa(casa.id, from, { saudou: true, aguardando: 'reclamacao' }); await sendText(from, 'Sentimos muito 😔 Descreva em uma mensagem o que aconteceu que eu encaminho ao gerente.'); return }
     if (intent === 'minhas') {
       await upConversa(casa.id, from, { saudou: true, aguardando: null })
@@ -472,7 +485,7 @@ app.post('/webhook', async (req, res) => {
     // ---- default: agente de RESERVA (também responde dúvidas) ----
     if (conv.aguardando === 'menu') await upConversa(casa.id, from, { aguardando: null })
     if (!conv.saudou && history.length === 0) {
-      await sendText(from, `Olá! 👋 Você está no *canal de reservas do ${casa.nome_curto ?? casa.nome}*. Será um prazer garantir sua mesa. 🍻\nPara começar: seu *nome*, *quantas pessoas*, a *data* e o *horário*.`)
+      await sendText(from, `Olá! 👋 Você está no *canal de reservas do ${casa.nome}*. Será um prazer garantir sua mesa. 🍻\nPara começar: seu *nome*, *quantas pessoas*, a *data* e o *horário*.`)
       await upConversa(casa.id, from, { saudou: true })
     }
     history.push({ role: 'user', content: texto })

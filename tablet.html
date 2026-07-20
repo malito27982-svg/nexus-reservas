@@ -276,6 +276,7 @@
     <div class="row2">
       <div class="field"><input id="cv_nome" placeholder="Nome do convidado"></div>
       <div class="field"><input id="cv_tel" placeholder="WhatsApp"></div>
+      <div class="field"><input id="cv_nasc" placeholder="Nascimento (dd/mm/aaaa)" maxlength="10"></div>
       <button class="b-green" style="color:#fff; padding:0 18px; margin-bottom:12px; border-radius:12px;" onclick="addConvManual()">+</button>
     </div>
     <div id="convList"></div>
@@ -932,12 +933,18 @@ async function renderConv(){
   document.getElementById('convList').innerHTML=host+(rows||'<div class="s" style="color:var(--muted)">Nenhum convidado confirmou ainda.</div>');
 }
 async function addConvManual(){
-  const nome=val('cv_nome').trim(), tel=val('cv_tel').trim();
+  const nome=val('cv_nome').trim(), tel=val('cv_tel').trim(), nascBr=val('cv_nasc').trim();
   if(!nome){ setText('convErr','Informe o nome.'); return; }
-  const {error}=await sb.from('convidados').insert({reserva_id:convReserva.id, casa_id:casaAtual.id, nome, telefone:tel||null, confirmado:true, confirmado_em:new Date().toISOString(), origem:'manual'});
+  let nasc=null;
+  if(nascBr){
+    const m=nascBr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if(!m){ setText('convErr','Nascimento no formato dd/mm/aaaa.'); return; }
+    nasc=`${m[3]}-${m[2]}-${m[1]}`;
+  }
+  const {error}=await sb.from('convidados').insert({reserva_id:convReserva.id, casa_id:casaAtual.id, nome, telefone:tel||null, data_nascimento:nasc, confirmado:true, confirmado_em:new Date().toISOString(), origem:'manual'});
   if(error){ setText('convErr','Erro: '+error.message); return; }
-  if(tel) await sb.from('clientes').upsert({casa_id:casaAtual.id, nome, telefone:tel},{onConflict:'casa_id,telefone'}); // adulto novo já entra no CRM
-  document.getElementById('cv_nome').value=''; document.getElementById('cv_tel').value='';
+  if(tel) await sb.from('clientes').upsert({casa_id:casaAtual.id, nome, telefone:tel, data_nascimento:nasc},{onConflict:'casa_id,telefone'}); // adulto novo já entra no CRM
+  document.getElementById('cv_nome').value=''; document.getElementById('cv_tel').value=''; document.getElementById('cv_nasc').value='';
   await renderConv(); loadConvidados().then(renderList);
 }
 async function removeConv(id){
