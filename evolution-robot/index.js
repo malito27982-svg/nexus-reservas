@@ -26,6 +26,8 @@ const CASA_SLUG = process.env.CASA_SLUG || ''
 const MODEL = process.env.MODEL || 'claude-haiku-4-5-20251001'
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || ''
 const ROBOT_URL = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'https://evolution-robot-production.up.railway.app'
+// base dos links públicos (confirmar.html, bar-fundo.jpg) — trocar p/ https://reservas.plionai.com.br quando o DNS estiver no ar
+const LINK_BASE = (process.env.LINK_BASE || 'https://lucasmalito.github.io/nexus-reservas').replace(/\/$/, '')
 
 // contexto da instância da mensagem atual (1 WhatsApp por unidade)
 const als = new AsyncLocalStorage()
@@ -172,7 +174,7 @@ async function criarReserva(casa, from, input) {
   const token = ins.data?.token
   await upConversa(casa.id, from, { flyer_etapa: 'ocasiao', flyer_feedback: false, flyer_count: 0, flyer_ocasiao: null, flyer_ctx: { nome, data, hora: hora ?? '', setor: amb.nome, casa: casa.nome, token } })
   const followups = [
-    `📋 *Link pra seus convidados confirmarem a presença:*\nhttps://lucasmalito.github.io/nexus-reservas/confirmar.html?t=${token}\n\n⚠️ Os ${pessoas} precisam confirmar — se faltar gente, a reserva pode perder os lugares. (Menores de 16 confirmam só com o nome.)`,
+    `📋 *Link pra seus convidados confirmarem a presença:*\n${LINK_BASE}/confirmar.html?t=${token}\n\n⚠️ Os ${pessoas} precisam confirmar — se faltar gente, a reserva pode perder os lugares. (Menores de 16 confirmam só com o nome.)`,
     `🎨 E posso te montar um *flyer* dessa reserva! Qual a ocasião? (aniversário, happy hour, encontro...) — ou responda "não quero".`,
   ]
   return { ok: true, mensagem: `Reserva GRAVADA: ${nome}, ${pessoas} pessoas, ${data}${hora ? ' às ' + hora : ''}, no ${amb.nome}. Confirme ao cliente de forma simpática e BREVE em UMA mensagem. NÃO mande link nem fale de flyer — o sistema envia em seguida.`, reserva_token: token, _followups: followups }
@@ -348,7 +350,7 @@ async function imagemApropriada(b64, mime) {
 async function gerarFlyerGemini(selfie, ctx, ocasiao, extra) {
   const hora = ctx?.hora ? String(ctx.hora).slice(0, 5) : ''
   let fundo = null
-  try { const rf = await fetch('https://lucasmalito.github.io/nexus-reservas/bar-fundo.jpg'); if (rf.ok) { const b = Buffer.from(await rf.arrayBuffer()); fundo = { inline_data: { mime_type: 'image/jpeg', data: b.toString('base64') } } } } catch (_) {}
+  try { const rf = await fetch(LINK_BASE + '/bar-fundo.jpg'); if (rf.ok) { const b = Buffer.from(await rf.arrayBuffer()); fundo = { inline_data: { mime_type: 'image/jpeg', data: b.toString('base64') } } } } catch (_) {}
   const prompt = `Crie um FLYER VERTICAL 9:16 de RESERVA CONFIRMADA do "${ctx?.casa || 'Botequim São Paulo'}".${fundo ? ' Use a ' + (selfie ? 'PRIMEIRA ' : '') + 'imagem (ambiente REAL do bar) como CENÁRIO/FUNDO.' : ''}${selfie ? ' A PESSOA da ' + (fundo ? 'SEGUNDA ' : '') + 'foto é o ELEMENTO PRINCIPAL: mostre o ROSTO GRANDE, em DESTAQUE e FIEL (rosto real dela).' : ''}${ocasiao ? ' CONTEXTO: ' + ocasiao + '.' : ''} Estilo moderno, cores quentes, boteco premium noturno. Tipografia legível com: "RESERVA CONFIRMADA", nome "${ctx?.nome || ''}", data "${ctx?.data || ''}${hora ? ' às ' + hora : ''}" e setor "${ctx?.setor || ''}".${extra ? ' AJUSTE: ' + extra + '.' : ''}`
   const parts = []
   if (fundo) parts.push(fundo)
@@ -364,7 +366,7 @@ async function gerarEnviarFlyer(casa, from, selfie, ctx, ocasiao, extra) {
   if (selfie && !(await imagemApropriada(selfie.b64, selfie.mime))) { await sendText(from, 'Essa foto não pode ser usada 🙅 Envie outra selfie apropriada que eu monto 🙂'); return }
   const flyer = await gerarFlyerGemini(selfie, ctx || {}, ocasiao, extra)
   if (!flyer) { await sendText(from, 'Não consegui gerar o flyer agora 😕 Mas sua reserva está garantida!'); return }
-  const link = ctx?.token ? `\n\n📋 Confirmem presença: https://lucasmalito.github.io/nexus-reservas/confirmar.html?t=${ctx.token}` : ''
+  const link = ctx?.token ? `\n\n📋 Confirmem presença: ${LINK_BASE}/confirmar.html?t=${ctx.token}` : ''
   await enviarImagemB64(from, flyer.b64, `Seu flyer do Botequim! 🎉 Manda pros convidados.${link}`)
   const c = (await sb.from('conversas').select('flyer_count').eq('casa_id', casa.id).eq('telefone', from).maybeSingle()).data
   const novo = (c?.flyer_count ?? 0) + 1
