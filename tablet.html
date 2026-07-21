@@ -132,7 +132,7 @@
       <button class="icnbtn" onclick="loadData()" title="Atualizar">⟳</button>
       <button class="icnbtn" id="btnFut" onclick="toggleFuturas()" title="Todas as próximas reservas">📅 Próximas</button>
       <button class="icnbtn" onclick="location.href='eventos.html'" title="Eventos">🎉 Eventos</button>
-      <button class="icnbtn" onclick="openSetup()" title="Config">⚙</button>
+      <button class="icnbtn" onclick="setModo('config')" title="Configurações">⚙</button>
     </div>
   </header>
 
@@ -198,7 +198,31 @@
     <div id="pesqList">—</div>
   </div>
 
+  <!-- CONFIG VIEW (⚙ WhatsApp por unidade) -->
+  <div id="configView" class="hidden" style="padding:16px;max-width:880px;">
+    <h2 style="margin-top:0;">⚙️ WhatsApp das unidades</h2>
+    <p style="color:var(--muted)">Cada unidade tem o seu próprio WhatsApp. Aqui você vê o celular conectado de cada casa e conecta um número novo escaneando o QR (no celular: <b>WhatsApp &gt; Aparelhos conectados &gt; Conectar um aparelho</b>). Depois de conectado, o robô atende automático com as informações daquela unidade.</p>
+    <div id="wppList" style="display:flex;flex-direction:column;gap:12px;">Carregando…</div>
+    <div style="margin-top:22px;color:var(--muted);font-size:14px;">
+      <a href="#" onclick="openSetup();return false;" style="color:var(--muted);">Conexão avançada (banco de dados)</a> ·
+      <a href="#" onclick="doLogout();return false;" style="color:var(--muted);">Sair do painel</a>
+    </div>
+  </div>
+
   <button class="fab" id="fab" onclick="openCreate()">+ Nova Reserva</button>
+</div>
+
+<!-- ============ MODAL: QR WHATSAPP ============ -->
+<div id="qrOverlay" class="overlay hidden">
+  <div class="modal" style="max-width:440px;text-align:center;">
+    <h2 id="qrTitulo">Conectar WhatsApp</h2>
+    <p id="qrStatus" style="color:var(--muted);">Gerando QR…</p>
+    <img id="qrImg" style="width:300px;height:300px;max-width:100%;background:#fff;border-radius:12px;display:none;" alt="QR Code">
+    <div class="foot" style="justify-content:center;">
+      <button class="b-cancel" onclick="fecharQr()">Fechar</button>
+      <button class="b-blue" style="color:#fff;" onclick="gerarQr(false)">Gerar novo QR</button>
+    </div>
+  </div>
 </div>
 
 <!-- ============ MODAL: NOVA RESERVA ============ -->
@@ -452,7 +476,8 @@ function setModo(m){
   document.getElementById('conversasView').classList.toggle('hidden',m!=='conversas');
   document.getElementById('iaView').classList.toggle('hidden',m!=='ia');
   document.getElementById('pesquisasView').classList.toggle('hidden',m!=='pesquisas');
-  document.getElementById('fab').classList.toggle('hidden',m==='conversas'||m==='calendario'||m==='ia'||m==='pesquisas');
+  document.getElementById('configView').classList.toggle('hidden',m!=='config');
+  document.getElementById('fab').classList.toggle('hidden',m==='conversas'||m==='calendario'||m==='ia'||m==='pesquisas'||m==='config');
   document.getElementById('fab').textContent = m==='reservas'?'+ Nova Reserva':'+ Adicionar à fila';
   if(convPoll){clearInterval(convPoll);convPoll=null;}
   if(m==='conversas'){ convPoll=setInterval(()=>{ if(document.getElementById('atendOverlay').classList.contains('hidden')) loadConversas(); },6000); }
@@ -460,7 +485,7 @@ function setModo(m){
   loadData();
 }
 function openCreate(){ modo==='reservas'?openForm():openFila(); }
-function loadData(){ modo==='reservas'?loadReservas():modo==='fila'?loadFila():modo==='calendario'?loadCalendario():modo==='ia'?loadIA():modo==='pesquisas'?loadPesquisas():loadConversas(); }
+function loadData(){ modo==='reservas'?loadReservas():modo==='fila'?loadFila():modo==='calendario'?loadCalendario():modo==='ia'?loadIA():modo==='pesquisas'?loadPesquisas():modo==='config'?loadWpp():loadConversas(); }
 
 // ===================== PESQUISAS (NPS cliente + clima funcionários) =====================
 async function loadPesquisas(){
@@ -518,6 +543,67 @@ async function delInfo(id){ if(!confirm('Remover esta informação?'))return; aw
 
 // ===================== CONVERSAS (atendimento + takeover humano) =====================
 const ROBOT_URL='https://evolution-robot-production.up.railway.app';
+
+// ===================== CONFIG ⚙: WhatsApp por unidade =====================
+let wppUnidades=[], qrCasaId=null, qrPoll=null;
+async function robo(method,path,body){
+  const {data:{session}}=await sb.auth.getSession();
+  const r=await fetch(ROBOT_URL+path,{method,headers:{'Content-Type':'application/json','Authorization':'Bearer '+((session&&session.access_token)||'')},body:body?JSON.stringify(body):undefined});
+  return await r.json();
+}
+async function loadWpp(){
+  const el=document.getElementById('wppList');
+  try{
+    const r=await robo('GET','/painel/instances');
+    if(!r.ok){ el.innerHTML='⚠️ '+esc(r.erro||'Erro no robô.'); return; }
+    wppUnidades=r.unidades||[];
+    el.innerHTML=wppUnidades.map((u,ix)=>{
+      const st=u.conectado?'🟢 Conectado':(u.status==='connecting'?'🟡 Conectando…':'🔴 Desconectado');
+      return `<div style="background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:220px;"><b>${esc(u.casa)}</b><br>
+          <span style="color:var(--muted);font-size:14px;">${st}${u.numero?' · 📱 '+esc(u.numero):''}${u.perfil?' · '+esc(u.perfil):''}</span></div>
+        <button class="${u.conectado?'b-cancel':'b-blue'}" style="${u.conectado?'':'color:#fff;'}" onclick="abrirQr(${ix})">${u.conectado?'Trocar número':'Conectar'}</button>
+      </div>`;
+    }).join('');
+  }catch(e){ el.innerHTML='⚠️ Não consegui falar com o robô ('+esc(e.message)+').'; }
+}
+function abrirQr(ix){
+  const u=wppUnidades[ix]; if(!u) return;
+  if(u.conectado && !confirm('Esta unidade JÁ tem o WhatsApp '+(u.numero||'')+' conectado.\nConectar outro número DESCONECTA o atual. Continuar?')) return;
+  qrCasaId=u.casa_id;
+  document.getElementById('qrTitulo').textContent='Conectar — '+u.casa;
+  document.getElementById('qrImg').style.display='none';
+  document.getElementById('qrStatus').textContent='Gerando QR…';
+  document.getElementById('qrOverlay').classList.remove('hidden');
+  gerarQr(u.conectado); // força troca só quando o usuário confirmou
+  if(qrPoll)clearInterval(qrPoll);
+  qrPoll=setInterval(checarConexao,5000);
+}
+async function gerarQr(force){
+  try{
+    const r=await robo('POST','/painel/qr',{casa_id:qrCasaId,force:!!force});
+    if(r.conectado){ conectou(r.numero); return; }
+    if(!r.ok){ document.getElementById('qrStatus').textContent='⚠️ '+(r.erro||'Erro ao gerar o QR.'); return; }
+    const img=document.getElementById('qrImg');
+    img.src=r.qr.indexOf('data:')===0?r.qr:'data:image/png;base64,'+r.qr;
+    img.style.display='inline-block';
+    document.getElementById('qrStatus').textContent='📱 No celular da unidade: WhatsApp > Aparelhos conectados > Conectar um aparelho. O QR expira rápido — se der erro, toque em "Gerar novo QR".';
+  }catch(e){ document.getElementById('qrStatus').textContent='⚠️ '+e.message; }
+}
+async function checarConexao(){
+  try{
+    const r=await robo('GET','/painel/instances');
+    const u=(r.unidades||[]).find(x=>x.casa_id===qrCasaId);
+    if(u&&u.conectado) conectou(u.numero);
+  }catch(e){}
+}
+function conectou(numero){
+  if(qrPoll){clearInterval(qrPoll);qrPoll=null;}
+  document.getElementById('qrImg').style.display='none';
+  document.getElementById('qrStatus').textContent='✅ Conectado!'+(numero?' Número: '+numero+'.':'')+' O robô já atende esta unidade.';
+  loadWpp();
+}
+function fecharQr(){ if(qrPoll){clearInterval(qrPoll);qrPoll=null;} document.getElementById('qrOverlay').classList.add('hidden'); }
 let convFiltro='todas', convAtual=null, convPoll=null, atendPoll=null;
 
 async function loadConversas(){

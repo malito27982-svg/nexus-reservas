@@ -6,6 +6,7 @@
 
 import express from 'express'
 import { createClient } from '@supabase/supabase-js'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 const app = express()
 app.use(express.json({ limit: '15mb' }))
@@ -13,14 +14,22 @@ app.use(express.json({ limit: '15mb' }))
 // --- env ---
 const EVOLUTION_URL = (process.env.EVOLUTION_URL || '').replace(/\/$/, '')
 const APIKEY   = process.env.EVOLUTION_APIKEY || ''
+const MASTER_KEY = process.env.EVOLUTION_MASTER_KEY || APIKEY // chave global da Evolution (criar/listar instâncias)
 const INSTANCE = process.env.INSTANCE || 'botequim-reservas'
 const PORT     = process.env.PORT || 3000
 const SB_URL   = process.env.SUPABASE_URL || ''
 const SB_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+const ANON_KEY = process.env.SUPABASE_ANON_KEY || ''
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || ''
 const GEMINI_KEY = process.env.GEMINI_FLYER_KEY || process.env.GEMINI_API_KEY || ''
 const CASA_SLUG = process.env.CASA_SLUG || ''
 const MODEL = process.env.MODEL || 'claude-haiku-4-5-20251001'
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || ''
+const ROBOT_URL = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'https://evolution-robot-production.up.railway.app'
+
+// contexto da instância da mensagem atual (1 WhatsApp por unidade)
+const als = new AsyncLocalStorage()
+const curInst = () => als.getStore()?.inst || INSTANCE
 
 const DELAY_MIN = 3000, DELAY_MAX = 6000
 const PRE_MIN = 4000, PRE_MAX = 11000
@@ -42,21 +51,21 @@ async function evoPost(path, payload) {
   } catch (e) { console.error(`  ⚠️ ${path} exc`, e.message); return null }
 }
 async function sendText(numero, texto) {
-  return evoPost(`/message/sendText/${INSTANCE}`, { number: numero, text: texto, delay: rand(1500, 3500) })
+  return evoPost(`/message/sendText/${curInst()}`, { number: numero, text: texto, delay: rand(1500, 3500) })
 }
 async function enviarImagemLink(numero, url, caption) {
-  return evoPost(`/message/sendMedia/${INSTANCE}`, { number: numero, mediatype: 'image', media: url, caption: caption || '' })
+  return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'image', media: url, caption: caption || '' })
 }
 async function enviarImagemB64(numero, b64, caption) {
-  return evoPost(`/message/sendMedia/${INSTANCE}`, { number: numero, mediatype: 'image', media: b64, caption: caption || '', fileName: 'flyer.png' })
+  return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'image', media: b64, caption: caption || '', fileName: 'flyer.png' })
 }
 async function enviarDocumento(numero, url, filename, caption) {
-  return evoPost(`/message/sendMedia/${INSTANCE}`, { number: numero, mediatype: 'document', media: url, fileName: filename, caption: caption || '' })
+  return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'document', media: url, fileName: filename, caption: caption || '' })
 }
 // baixa base64 de uma midia recebida (selfie do flyer)
 async function baixarMidiaB64(dataMsg) {
   try {
-    const r = await evoPost(`/chat/getBase64FromMediaMessage/${INSTANCE}`, { message: { key: dataMsg.key, message: dataMsg.message }, convertToMp4: false })
+    const r = await evoPost(`/chat/getBase64FromMediaMessage/${curInst()}`, { message: { key: dataMsg.key, message: dataMsg.message }, convertToMp4: false })
     if (r?.base64) return { b64: r.base64, mime: r.mimetype || 'image/jpeg' }
   } catch (e) { console.error('baixarMidia', e.message) }
   return null
@@ -67,6 +76,9 @@ const CASA_COLS = 'id,nome,slug,nome_curto'
 // 1 WhatsApp por unidade (spec Lucas 20/07): CASA_MAP = {"nome-da-instancia":"slug-da-casa"}
 // A instância que chega no webhook decide a casa; CASA_SLUG segue como fallback.
 const CASA_MAP = (() => { try { return JSON.parse(process.env.CASA_MAP || '{}') } catch { return {} } })()
+// mapa inverso: slug da casa -> nome da instância; casa sem mapeamento usa o próprio slug como instância
+const INST_BY_SLUG = Object.fromEntries(Object.entries(CASA_MAP).map(([i, s]) => [s, i]))
+const instDaCasa = (slug) => INST_BY_SLUG[slug] || slug
 const _casas = {}
 async function getCasa(slug) {
   const efetivo = slug || CASA_SLUG
@@ -361,16 +373,113 @@ async function gerarEnviarFlyer(casa, from, selfie, ctx, ocasiao, extra) {
   else await sendText(from, 'Ficou bom? 😊 Quer alterar algo (ex: "mais escuro")? É só dizer. Se estiver ótimo, avise! 🙌')
 }
 
+// ===================== PAINEL (login Supabase + WhatsApp por unidade) =====================
+// CORS aberto: a trava real é o JWT do login (Bearer), não a origem.
+app.use('/painel', (req, res, next) => {
+  res.set({ 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' })
+  if (req.method === 'OPTIONS') return res.sendStatus(204)
+  next()
+})
+const _authCache = new Map()
+async function userDoToken(tok) {
+  if (!tok) return null
+  const hit = _authCache.get(tok)
+  if (hit && hit.exp > Date.now()) return hit.user
+  try {
+    const r = await fetch(`${SB_URL}/auth/v1/user`, { headers: { apikey: ANON_KEY, Authorization: `Bearer ${tok}` } })
+    if (!r.ok) return null
+    const u = await r.json()
+    _authCache.set(tok, { user: u, exp: Date.now() + 60000 })
+    return u
+  } catch { return null }
+}
+async function exigeLogin(req, res) {
+  const u = await userDoToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''))
+  if (!u) { res.status(401).json({ ok: false, erro: 'Faça login no painel.' }); return null }
+  return u
+}
+async function evoAdmin(method, path) {
+  try {
+    const r = await fetch(`${EVOLUTION_URL}${path}`, { method, headers: { apikey: MASTER_KEY } })
+    if (!r.ok) return { _erro: `${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}` }
+    return await r.json().catch(() => ({}))
+  } catch (e) { return { _erro: e.message } }
+}
+async function listaInstancias() {
+  const r = await evoAdmin('GET', '/instance/fetchInstances')
+  return Array.isArray(r) ? r : (r && r.name ? [r] : [])
+}
+
+// status do WhatsApp de cada unidade (pro ⚙️ do tablet)
+app.get('/painel/instances', async (req, res) => {
+  if (!(await exigeLogin(req, res))) return
+  const casas = (await sb.from('casas').select('id,nome,nome_curto,slug').eq('ativo', true).order('nome')).data ?? []
+  const lista = await listaInstancias()
+  res.json({ ok: true, unidades: casas.map((c) => {
+    const inst = instDaCasa(c.slug)
+    const i = lista.find((x) => x.name === inst)
+    const status = i?.connectionStatus || 'inexistente'
+    return { casa_id: c.id, casa: c.nome, slug: c.slug, instancia: inst, existe: !!i, status, conectado: status === 'open',
+      numero: i?.ownerJid ? '+' + i.ownerJid.split('@')[0] : null, perfil: i?.profileName || null }
+  }) })
+})
+
+// gera QR pra conectar o WhatsApp da unidade (cria a instância se não existir)
+app.post('/painel/qr', async (req, res) => {
+  if (!(await exigeLogin(req, res))) return
+  const { casa_id, force, refresh } = req.body || {}
+  const c = (await sb.from('casas').select('id,nome,slug').eq('id', casa_id).maybeSingle()).data
+  if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
+  const inst = instDaCasa(c.slug)
+  const existe = (await listaInstancias()).find((x) => x.name === inst)
+  if (!existe) {
+    try {
+      const cr = await fetch(`${EVOLUTION_URL}/instance/create`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: MASTER_KEY },
+        body: JSON.stringify({ instanceName: inst, integration: 'WHATSAPP-BAILEYS', qrcode: false,
+          webhook: { url: `${ROBOT_URL}/webhook`, byEvents: false, base64: false, headers: { 'x-webhook-secret': WEBHOOK_SECRET }, events: ['MESSAGES_UPSERT'] } }) })
+      if (!cr.ok) return res.json({ ok: false, erro: `Criar instância falhou: ${cr.status} ${(await cr.text()).slice(0, 200)}` })
+    } catch (e) { return res.json({ ok: false, erro: 'Criar instância: ' + e.message }) }
+  } else if (existe.connectionStatus === 'open' && !force) {
+    return res.json({ ok: true, conectado: true, numero: existe.ownerJid ? '+' + existe.ownerJid.split('@')[0] : null })
+  } else if (!refresh) {
+    await evoAdmin('DELETE', `/instance/logout/${inst}`) // sessão velha trava o pareamento novo
+  }
+  const conn = await evoAdmin('GET', `/instance/connect/${inst}`)
+  const b64 = conn?.base64 || conn?.qrcode?.base64
+  if (!b64) return res.json({ ok: false, erro: 'Evolution não devolveu QR: ' + JSON.stringify(conn).slice(0, 200) })
+  res.json({ ok: true, conectado: false, qr: b64, pairingCode: conn?.pairingCode || null })
+})
+
+// resposta humana do painel (aba Conversas / envio de pesquisa)
+app.post('/painel/send', async (req, res) => {
+  if (!(await exigeLogin(req, res))) return
+  const { casa_id, telefone, texto } = req.body || {}
+  if (!casa_id || !telefone || !texto) return res.status(400).json({ ok: false, erro: 'casa_id, telefone e texto são obrigatórios.' })
+  const c = (await sb.from('casas').select('id,slug').eq('id', casa_id).maybeSingle()).data
+  if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
+  const r = await als.run({ inst: instDaCasa(c.slug) }, () => sendText(telefone, texto))
+  const conv = (await sb.from('conversas').select('historico').eq('casa_id', casa_id).eq('telefone', telefone).maybeSingle()).data
+  const h = Array.isArray(conv?.historico) ? conv.historico : []
+  h.push({ role: 'assistant', content: texto })
+  await sb.from('conversas').update({ historico: h, updated_at: new Date().toISOString() }).eq('casa_id', casa_id).eq('telefone', telefone)
+  res.json({ ok: !!r })
+})
+
 // ===================== WEBHOOK =====================
 function extrairTexto(m = {}) { return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '' }
 
-app.get('/', (_req, res) => res.json({ ok: true, robo: 'botequim', instancia: INSTANCE, casa: CASA_SLUG || '(auto)' }))
+app.get('/', (_req, res) => res.json({ ok: true, robo: 'botequim', multi: Object.keys(CASA_MAP).length || 0 }))
 
 app.post('/webhook', async (req, res) => {
+  if (WEBHOOK_SECRET && req.headers['x-webhook-secret'] !== WEBHOOK_SECRET) return res.sendStatus(401)
   res.sendStatus(200)
-  try {
-    const body = req.body || {}
-    if (String(body.event || '').toLowerCase().replace(/_/g, '.') !== 'messages.upsert') return
+  const body = req.body || {}
+  if (String(body.event || '').toLowerCase().replace(/_/g, '.') !== 'messages.upsert') return
+  als.run({ inst: body.instance || INSTANCE }, () => processarMensagem(body).catch((e) => console.error('erro webhook:', e.message)))
+})
+
+async function processarMensagem(body) {
+  {
     const d = body.data || {}; const key = d.key || {}; const jid = key.remoteJid || ''
     if (key.fromMe || jid === 'status@broadcast') return
     if (jid.endsWith('@g.us')) return
@@ -379,8 +488,10 @@ app.post('/webhook', async (req, res) => {
     const texto = extrairTexto(d.message)
     console.log(`💬 ${d.pushName || from}: ${isImage ? '[imagem] ' : ''}${texto || ''}`)
 
-    const casa = await getCasa(CASA_MAP[body.instance])
-    if (!casa) { console.error('!! casa não encontrada'); return }
+    // instância mapeada no CASA_MAP OU instância com nome = slug da casa; fallback = CASA_SLUG
+    let casa = await getCasa(CASA_MAP[body.instance] || body.instance)
+    if (!casa) casa = await getCasa()
+    if (!casa) { console.error('!! casa não encontrada p/ instância', body.instance); return }
     const conv = await getConversa(casa.id, from)
     await gravaNome(casa.id, from, d.pushName || null)
 
@@ -493,7 +604,7 @@ app.post('/webhook', async (req, res) => {
     if (reply.text) { history.push({ role: 'assistant', content: reply.text }); await sendText(from, reply.text) }
     for (const fu of reply.followups ?? []) { await sendText(from, fu); history.push({ role: 'assistant', content: fu }) }
     await upConversa(casa.id, from, { historico: history })
-  } catch (e) { console.error('erro webhook:', e.message) }
-})
+  }
+}
 
-app.listen(PORT, () => console.log(`Robo Botequim ouvindo na porta ${PORT} | ${INSTANCE} | casa ${CASA_SLUG || '(auto)'}`))
+app.listen(PORT, () => console.log(`Robo Botequim ouvindo na porta ${PORT} | multi-instância | fallback ${INSTANCE}`))
