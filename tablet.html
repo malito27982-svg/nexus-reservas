@@ -440,7 +440,7 @@ async function bootstrap(){
   const {data,error}=await sb.from('casas').select('*').eq('ativo',true).order('nome');
   if(error){ alert('Erro ao ler casas: '+error.message+'\n\nJá rodou o SQL no Supabase?'); return; }
   casas=data||[];
-  if(!casas.length){ alert('Nenhuma casa. Rode o SQL com o SEED no Supabase.'); return; }
+  if(!casas.length){ alert('Seu usuário ainda não tem acesso a nenhuma unidade. Peça ao administrador (Lucas) para liberar.'); return; }
   casaAtual=casas[0];
   const sel=document.getElementById('casaSel');
   if(casas.length>1){ sel.classList.remove('hidden'); sel.innerHTML=casas.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join(''); }

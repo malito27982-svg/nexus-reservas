@@ -400,6 +400,17 @@ async function exigeLogin(req, res) {
   if (!u) { res.status(401).json({ ok: false, erro: 'Faça login no painel.' }); return null }
   return u
 }
+// acesso por casa: 'all' = admin; senão lista de casa_ids do usuário.
+// Enquanto as tabelas de permissão não existirem no banco, libera tudo (comportamento antigo).
+async function casasPermitidas(user) {
+  const adm = await sb.from('painel_usuarios').select('admin').eq('user_id', user.id).maybeSingle()
+  if (adm.error) return 'all'
+  if (adm.data?.admin) return 'all'
+  const rows = await sb.from('user_casas').select('casa_id').eq('user_id', user.id)
+  if (rows.error) return 'all'
+  return (rows.data ?? []).map((r) => r.casa_id)
+}
+const podeCasa = (perm, casa_id) => perm === 'all' || perm.includes(casa_id)
 async function evoAdmin(method, path) {
   try {
     const r = await fetch(`${EVOLUTION_URL}${path}`, { method, headers: { apikey: MASTER_KEY } })
@@ -414,8 +425,10 @@ async function listaInstancias() {
 
 // status do WhatsApp de cada unidade (pro ⚙️ do tablet)
 app.get('/painel/instances', async (req, res) => {
-  if (!(await exigeLogin(req, res))) return
-  const casas = (await sb.from('casas').select('id,nome,nome_curto,slug').eq('ativo', true).order('nome')).data ?? []
+  const u = await exigeLogin(req, res); if (!u) return
+  const perm = await casasPermitidas(u)
+  let casas = (await sb.from('casas').select('id,nome,nome_curto,slug').eq('ativo', true).order('nome')).data ?? []
+  casas = casas.filter((c) => podeCasa(perm, c.id))
   const lista = await listaInstancias()
   res.json({ ok: true, unidades: casas.map((c) => {
     const inst = instDaCasa(c.slug)
@@ -428,8 +441,9 @@ app.get('/painel/instances', async (req, res) => {
 
 // gera QR pra conectar o WhatsApp da unidade (cria a instância se não existir)
 app.post('/painel/qr', async (req, res) => {
-  if (!(await exigeLogin(req, res))) return
+  const u = await exigeLogin(req, res); if (!u) return
   const { casa_id, force, refresh } = req.body || {}
+  if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
   const c = (await sb.from('casas').select('id,nome,slug').eq('id', casa_id).maybeSingle()).data
   if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
   const inst = instDaCasa(c.slug)
@@ -454,9 +468,10 @@ app.post('/painel/qr', async (req, res) => {
 
 // resposta humana do painel (aba Conversas / envio de pesquisa)
 app.post('/painel/send', async (req, res) => {
-  if (!(await exigeLogin(req, res))) return
+  const u = await exigeLogin(req, res); if (!u) return
   const { casa_id, telefone, texto } = req.body || {}
   if (!casa_id || !telefone || !texto) return res.status(400).json({ ok: false, erro: 'casa_id, telefone e texto são obrigatórios.' })
+  if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
   const c = (await sb.from('casas').select('id,slug').eq('id', casa_id).maybeSingle()).data
   if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
   const r = await als.run({ inst: instDaCasa(c.slug) }, () => sendText(telefone, texto))
