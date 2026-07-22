@@ -59,7 +59,7 @@ async function enviarImagemLink(numero, url, caption) {
   return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'image', media: url, caption: caption || '' })
 }
 async function enviarImagemB64(numero, b64, caption) {
-  return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'image', media: b64, caption: caption || '', fileName: 'flyer.png' })
+  return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'image', mimetype: 'image/png', media: b64, caption: caption || '', fileName: 'flyer.png' })
 }
 async function enviarDocumento(numero, url, filename, caption) {
   return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'document', media: url, fileName: filename, caption: caption || '' })
@@ -193,6 +193,9 @@ async function criarReserva(casa, from, input) {
 // ===================== AGENTE RESERVA =====================
 async function runAgent(casa, from, history) {
   const ambientes = (await sb.from('ambientes').select('nome,limite_pessoas,capacidade_min_reserva,capacidade_max_reserva').eq('casa_id', casa.id).eq('ativo', true).order('ordem')).data ?? []
+  // cliente recorrente: não pedir os dados de novo (spec Giovanna 22/07)
+  const cli = (await sb.from('clientes').select('nome,data_nascimento').eq('casa_id', casa.id).eq('telefone', from).maybeSingle()).data
+    ?? (await sb.from('clientes').select('nome,data_nascimento').eq('telefone', from).limit(1).maybeSingle()).data
   const infos = (await sb.from('casa_infos').select('categoria,titulo,texto').eq('casa_id', casa.id).eq('status', 'aprovado')).data ?? []
   const infosTxt = infos.map((i) => `- ${i.titulo}${i.categoria && i.categoria !== 'Geral' ? ` (${i.categoria})` : ''}: ${i.texto}`).join('\n')
   const hoje = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -208,7 +211,7 @@ Se vier "horarios_por_setor", esses horários extras valem SÓ para o setor indi
 Se vier "aviso", transmita o texto ao cliente UMA vez quando a reserva/consulta cair na janela indicada.
 EVENTOS: se vier "evento", avise com entusiasmo (título, descrição, menu/preço).
 ${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}
-REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Confirme o resumo e SÓ DEPOIS chame criar_reserva.` }]
+${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
   const tools = [
     { name: 'consultar_disponibilidade', description: 'Verifica data aberta e setores que comportam as pessoas.', input_schema: { type: 'object', properties: { data: { type: 'string' }, pessoas: { type: 'integer' } }, required: ['data', 'pessoas'] } },
     { name: 'criar_reserva', description: 'Cria a reserva. Só quando o cliente confirmar.', input_schema: { type: 'object', properties: { nome: { type: 'string' }, data: { type: 'string' }, hora: { type: 'string' }, pessoas: { type: 'integer' }, setor: { type: 'string' }, nascimento: { type: 'string', description: 'data de nascimento AAAA-MM-DD (obrigatória)' } }, required: ['nome', 'data', 'pessoas', 'setor', 'nascimento'] } },
@@ -509,7 +512,9 @@ app.get('/debug/flyer', async (req, res) => {
   if (WEBHOOK_SECRET && req.headers['x-webhook-secret'] !== WEBHOOK_SECRET) return res.sendStatus(401)
   const t0 = Date.now()
   const flyer = await gerarFlyerGemini(null, { nome: 'Teste', data: '25/07', hora: '19:00', setor: 'Varanda', casa: 'Botequim Santo André' }, 'teste interno de diagnóstico')
-  res.json({ ok: !!flyer, ms: Date.now() - t0, bytes: flyer ? flyer.b64.length : 0 })
+  let envio = null
+  if (flyer && req.query.send) envio = await enviarImagemB64(String(req.query.send), flyer.b64, '🧪 Teste interno do flyer (ignorar)')
+  res.json({ ok: !!flyer, ms: Date.now() - t0, bytes: flyer ? flyer.b64.length : 0, envio: req.query.send ? !!envio : undefined })
 })
 
 // ===================== WEBHOOK =====================
@@ -581,6 +586,19 @@ async function processarMensagem(body) {
       if (/([óo]tim|bom|boa|gostei|perfeit|obrigad|valeu|adorei|maravilh|top|show|amei|lind|fic(ou|o) bom)/i.test(texto)) { await upConversa(casa.id, from, { flyer_feedback: false }); await sendText(from, 'Que ótimo! 🎉 Pode enviar aos convidados. Te esperamos no Botequim! 🍻'); return }
       if ((conv.flyer_count ?? 0) >= 3) { await upConversa(casa.id, from, { flyer_feedback: false }); await sendText(from, 'Esse foi o limite de ajustes 🙂 O último ficou pronto e sua reserva está garantida!'); return }
       await sendText(from, 'Certo! Ajustando o flyer... 🎨'); await gerarEnviarFlyer(casa, from, null, conv.flyer_ctx || {}, conv.flyer_ocasiao, texto); return
+    }
+
+    // ---- pediu FLYER por texto, fora do pós-reserva (spec Giovanna 22/07) ----
+    if (/\bfl[iy]er\b|arte da reserva/i.test(texto) && !conv.flyer_etapa) {
+      const hojeD = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+      const r = (await sb.from('reservas').select('nome,data,hora,token,ambiente_id').eq('casa_id', casa.id).eq('telefone', from).gte('data', hojeD).in('status', ['pendente', 'confirmada']).order('data').limit(1).maybeSingle()).data
+      if (!r) { await sendText(from, 'O flyer é montado junto com a sua reserva 🙂 Quer reservar? Me diga seu *nome*, *quantas pessoas*, a *data* e o *horário* — e depois eu crio seu flyer! 🎨'); return }
+      const amb = r.ambiente_id ? (await sb.from('ambientes').select('nome').eq('id', r.ambiente_id).maybeSingle()).data : null
+      const ctx = { nome: r.nome, data: String(r.data).split('-').reverse().join('/'), hora: r.hora ?? '', setor: amb?.nome ?? '', casa: casa.nome, token: r.token }
+      const ocas = texto.replace(/.*fl[iy]er( d[eao])?/i, '').replace(/[!.?]+$/, '').trim()
+      if (ocas.length > 2) { await upConversa(casa.id, from, { flyer_etapa: 'tema', flyer_ocasiao: ocas, flyer_ctx: ctx, flyer_count: 0, flyer_feedback: false }); await sendText(from, 'Bora! 🎉 Qual o *tema/estilo* do flyer? (elegante, retrô, neon, festa colorida...)'); return }
+      await upConversa(casa.id, from, { flyer_etapa: 'ocasiao', flyer_ctx: ctx, flyer_count: 0, flyer_feedback: false })
+      await sendText(from, '🎨 Bora montar o flyer da sua reserva! Qual a *ocasião*? (aniversário, happy hour, encontro...)'); return
     }
 
     // ---- reclamação ----
