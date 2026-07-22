@@ -501,7 +501,7 @@ async function loadPesquisas(){
     const promo=npsVals.filter(n=>n>=9).length, detra=npsVals.filter(n=>n<=6).length;
     const nps=npsVals.length?Math.round((promo-detra)/npsVals.length*100):null;
     const media=npsVals.length?(npsVals.reduce((s,n)=>s+n,0)/npsVals.length).toFixed(1):'—';
-    const link='https://lucasmalito.github.io/nexus-reservas/pesquisa.html?p='+p.slug;
+    const link='https://reservas.plionai.com.br/pesquisa.html?p='+p.slug;
     const coment=rs.map(r=>(r.respostas||[]).filter(x=>typeof x.resposta==='string'&&x.resposta.length>2&&!(p.perguntas.find(q=>q.q===x.pergunta&&q.t==='escolha'))).map(x=>esc(x.resposta))).flat().slice(0,5);
     return `<div class="card" style="margin-bottom:14px;">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -608,26 +608,30 @@ let convFiltro='todas', convAtual=null, convPoll=null, atendPoll=null;
 
 async function loadConversas(){
   if(!casaAtual) return;
-  const {data,error}=await sb.from('conversas').select('telefone,historico,handoff,aguardando,updated_at,nome').eq('casa_id',casaAtual.id).order('updated_at',{ascending:false}).limit(100);
+  const {data,error}=await sb.from('conversas').select('telefone,historico,handoff,handoff_aguardando,aguardando,updated_at,nome').eq('casa_id',casaAtual.id).order('updated_at',{ascending:false}).limit(100);
   const inbox=document.getElementById('convInbox');
   if(error){ inbox.innerHTML='<div style="padding:20px;color:var(--muted)">Erro: '+esc(error.message)+'</div>'; return; }
   let lista=(data||[]).filter(c=>Array.isArray(c.historico)&&c.historico.length);
-  const total=lista.length, humano=lista.filter(c=>c.handoff).length;
+  const total=lista.length, aguard=lista.filter(c=>c.handoff_aguardando).length, humano=lista.filter(c=>c.handoff&&!c.handoff_aguardando).length;
   // nomes do CRM
   let nomes={};
   const tels=lista.map(c=>c.telefone);
   if(tels.length){ const {data:cl}=await sb.from('clientes').select('telefone,nome').eq('casa_id',casaAtual.id).in('telefone',tels); (cl||[]).forEach(x=>nomes[x.telefone]=x.nome); }
-  if(convFiltro==='humano') lista=lista.filter(c=>c.handoff);
+  if(convFiltro==='aguardando') lista=lista.filter(c=>c.handoff_aguardando);
+  if(convFiltro==='humano') lista=lista.filter(c=>c.handoff&&!c.handoff_aguardando);
+  // fila estilo WhatsApp: quem AGUARDA atendente primeiro, depois em atendimento humano, depois robô
+  lista.sort((a,b)=>(b.handoff_aguardando?2:b.handoff?1:0)-(a.handoff_aguardando?2:a.handoff?1:0));
   document.getElementById('convFiltros').innerHTML=
     `<button class="${convFiltro==='todas'?'on':''}" onclick="setConvFiltro('todas')">Todas ${total}</button>`+
+    `<button class="${convFiltro==='aguardando'?'on':''}" onclick="setConvFiltro('aguardando')" ${aguard?'style="background:#e11d48;color:#fff;"':''}>🔔 Aguardando ${aguard}</button>`+
     `<button class="${convFiltro==='humano'?'on':''}" onclick="setConvFiltro('humano')">🙋 Em atendimento ${humano}</button>`;
   inbox.innerHTML = lista.length? lista.map(c=>{
     const last=c.historico[c.historico.length-1]||{};
     const quem=last.role==='user'?'':(last.humano?'Você: ':'🤖 ');
     const prev=esc((quem+(last.content||'')).slice(0,90));
-    const badge=c.handoff?'<span style="background:#7c3aed;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🙋 Humano</span>':'<span style="background:#0a7a55;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🤖 IA ativa</span>';
+    const badge=c.handoff_aguardando?'<span style="background:#e11d48;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🔔 Aguardando atendente</span>':c.handoff?'<span style="background:#7c3aed;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🙋 Humano</span>':'<span style="background:#0a7a55;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🤖 IA ativa</span>';
     const nome=nomes[c.telefone]||c.nome||c.telefone;
-    return `<div class="card" style="cursor:pointer;" onclick="openAtend('${c.telefone}')">
+    return `<div class="card" style="cursor:pointer;${c.handoff_aguardando?'border:2px solid #e11d48;':''}" onclick="openAtend('${c.telefone}')">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><b>${esc(nome)}</b>${badge}</div>
       <div style="color:var(--muted);font-size:14px;margin-top:4px;">${prev}</div>
       <div style="color:var(--muted);font-size:12px;margin-top:2px;">${fmtHora(c.updated_at)} · ${c.telefone}</div>
@@ -635,6 +639,26 @@ async function loadConversas(){
   }).join(''):'<div style="padding:24px;color:var(--muted)">Nenhuma conversa ainda.</div>';
 }
 function setConvFiltro(f){ convFiltro=f; loadConversas(); }
+
+// ===== vigia GLOBAL de atendimento humano (roda em qualquer aba: badge + som) =====
+let aguardandoPrev=-1;
+async function vigiaAtendimento(){
+  if(!casaAtual||!sb) return;
+  const {count,error}=await sb.from('conversas').select('*',{count:'exact',head:true}).eq('casa_id',casaAtual.id).eq('handoff_aguardando',true);
+  if(error) return;
+  const n=count||0;
+  const btn=document.getElementById('m_conversas');
+  let b=document.getElementById('convAlertBadge');
+  if(!b&&btn){ b=document.createElement('span'); b.id='convAlertBadge'; b.className='badge'; b.style.cssText='background:#e11d48;color:#fff;'; btn.appendChild(b); }
+  if(b){ b.style.display=n?'inline-block':'none'; b.textContent='🔔 '+n; }
+  document.title=(n?'(🔔'+n+') ':'')+'Painel Botequim';
+  if(aguardandoPrev>=0&&n>aguardandoPrev){ beepAtendimento(); if(modo==='conversas') loadConversas(); }
+  aguardandoPrev=n;
+}
+function beepAtendimento(){ try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const t=ctx.currentTime;
+  [[880,0],[660,.2],[880,.4]].forEach(([f,d])=>{ const o=ctx.createOscillator(),g=ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.frequency.value=f; g.gain.setValueAtTime(.25,t+d); g.gain.exponentialRampToValueAtTime(.001,t+d+.18); o.start(t+d); o.stop(t+d+.2); });
+}catch(_){} }
+setInterval(vigiaAtendimento,10000);
 
 // ===================== CALENDÁRIO =====================
 let calAnchor=null;
@@ -753,8 +777,8 @@ async function refreshAtend(){
 function closeAtend(){ document.getElementById('atendOverlay').classList.add('hidden'); if(atendPoll){clearInterval(atendPoll);atendPoll=null;} convAtual=null; loadConversas(); }
 async function painel(op,extra){
   const tel=convAtual.telefone;
-  if(op==='painel_assumir'){ const {error}=await sb.from('conversas').update({handoff:true}).eq('casa_id',casaAtual.id).eq('telefone',tel); return {ok:!error,erro:error&&error.message}; }
-  if(op==='painel_devolver'){ const {error}=await sb.from('conversas').update({handoff:false}).eq('casa_id',casaAtual.id).eq('telefone',tel); return {ok:!error,erro:error&&error.message}; }
+  if(op==='painel_assumir'){ const {error}=await sb.from('conversas').update({handoff:true,handoff_aguardando:false}).eq('casa_id',casaAtual.id).eq('telefone',tel); vigiaAtendimento(); return {ok:!error,erro:error&&error.message}; }
+  if(op==='painel_devolver'){ const {error}=await sb.from('conversas').update({handoff:false,handoff_aguardando:false}).eq('casa_id',casaAtual.id).eq('telefone',tel); vigiaAtendimento(); return {ok:!error,erro:error&&error.message}; }
   if(op==='painel_send'){
     const { data:{ session } }=await sb.auth.getSession();
     try{ const r=await fetch(ROBOT_URL+'/painel/send',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((session&&session.access_token)||'')},body:JSON.stringify({casa_id:casaAtual.id,telefone:tel,texto:(extra&&extra.texto)||''})}); return await r.json(); }
@@ -919,7 +943,7 @@ async function setStatus(id,st){
 }
 async function enviarPesquisa(id){
   const r=reservas.find(x=>x.id===id); if(!r||!r.telefone) return;
-  const link='https://lucasmalito.github.io/nexus-reservas/pesquisa.html?p=cli-'+casaAtual.slug+'&r='+encodeURIComponent(r.telefone);
+  const link='https://reservas.plionai.com.br/pesquisa.html?p=cli-'+casaAtual.slug+'&r='+encodeURIComponent(r.telefone);
   const texto='Oi '+(r.nome||'')+'! Que bom ter você no '+(casaAtual.nome_curto||casaAtual.nome)+' hoje 🍻 Sua opinião vale muito pra gente — responde rapidinho? '+link;
   try{ const { data:{ session } }=await sb.auth.getSession();
     await fetch(ROBOT_URL+'/painel/send',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((session&&session.access_token)||'')},body:JSON.stringify({casa_id:casaAtual.id,telefone:r.telefone,texto})}); }catch(e){}

@@ -27,7 +27,7 @@ const MODEL = process.env.MODEL || 'claude-haiku-4-5-20251001'
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || ''
 const ROBOT_URL = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'https://evolution-robot-production.up.railway.app'
 // base dos links públicos (confirmar.html, bar-fundo.jpg) — trocar p/ https://reservas.plionai.com.br quando o DNS estiver no ar
-const LINK_BASE = (process.env.LINK_BASE || 'https://lucasmalito.github.io/nexus-reservas').replace(/\/$/, '')
+const LINK_BASE = (process.env.LINK_BASE || 'https://reservas.plionai.com.br').replace(/\/$/, '')
 
 // contexto da instância da mensagem atual (1 WhatsApp por unidade)
 const als = new AsyncLocalStorage()
@@ -74,7 +74,7 @@ async function baixarMidiaB64(dataMsg) {
 }
 
 // ===================== CASA / CONVERSA =====================
-const CASA_COLS = 'id,nome,slug,nome_curto'
+const CASA_COLS = 'id,nome,slug,nome_curto,aviso_reserva'
 // 1 WhatsApp por unidade (spec Lucas 20/07): CASA_MAP = {"nome-da-instancia":"slug-da-casa"}
 // A instância que chega no webhook decide a casa; CASA_SLUG segue como fallback.
 const CASA_MAP = (() => { try { return JSON.parse(process.env.CASA_MAP || '{}') } catch { return {} } })()
@@ -146,27 +146,37 @@ async function consultarDisponibilidade(casa, input) {
     .filter((a) => pessoas >= a.capacidade_min_reserva && pessoas <= (a.capacidade_max_reserva ?? a.limite_pessoas))
     .map((a) => { const ocup = reservasDia.filter((r) => r.ambiente_id === a.id).reduce((s, r) => s + (r.qtd_pessoas || 0), 0); return { setor: a.nome, vagas: Math.max(0, a.limite_pessoas - ocup) } })
     .filter((s) => s.vagas >= pessoas)
-  const girosAll = (await sb.from('giros').select('horario_min,horario_max,intervalo_min,fechamento_antecipado,dias_semana').eq('casa_id', casa.id).eq('ativo', true)).data ?? []
+  const girosAll = (await sb.from('giros').select('horario_min,horario_max,intervalo_min,fechamento_antecipado,dias_semana,somente_ambiente').eq('casa_id', casa.id).eq('ativo', true)).data ?? []
   const giros = girosAll.filter((g) => !g.dias_semana || g.dias_semana.includes(dow))
+  const girosLivres = giros.filter((g) => !g.somente_ambiente)
+  const girosRestritos = giros.filter((g) => g.somente_ambiente)
   const expsAll = (await sb.from('experiencias').select('titulo,descricao,regras,data,dias_semana,hora_min,hora_max,altera_dia,menu_especial,menu_preco,divulgar,formato,preco_ingresso').eq('casa_id', casa.id).eq('ativo', true)).data ?? []
   const exp = expsAll.find((e) => (e.data && e.data === data) || (!e.data && Array.isArray(e.dias_semana) && e.dias_semana.includes(dow)))
   if (!giros.length && !(exp && exp.altera_dia)) return { aberto: false, motivo: 'Não há reservas neste dia da semana.' }
-  let horarios = gerarHorarios(giros)
+  let horarios = gerarHorarios(girosLivres)
   if (exp && exp.altera_dia && exp.hora_min) horarios = gerarHorarios([{ horario_min: exp.hora_min, horario_max: exp.hora_max ?? exp.hora_min, intervalo_min: 30 }])
+  // giros restritos a um setor (ex.: SA sáb 16-17h só Praça Central; WL sáb 18-19h só Frente do bar)
+  const horarios_por_setor = girosRestritos.length ? girosRestritos.map((g) => ({ setor: g.somente_ambiente, horarios: gerarHorarios([g]) })) : undefined
   const evento = (exp && exp.divulgar) ? { titulo: exp.titulo, descricao: exp.descricao, regras: exp.regras, menu_especial: exp.menu_especial, menu_preco: exp.menu_preco, formato: exp.formato, preco_ingresso: exp.preco_ingresso } : undefined
-  return { aberto: true, setores_disponiveis: setores, horarios, evento }
+  // aviso configurável por casa (ex.: SA seg-sex almoço à la carte + buffet kg)
+  const av = casa.aviso_reserva
+  const aviso = (av && Array.isArray(av.dias) && av.dias.includes(dow)) ? { janela: `${av.de || ''}-${av.ate || ''}`, texto: av.texto } : undefined
+  return { aberto: true, setores_disponiveis: setores, horarios, horarios_por_setor, evento, aviso }
 }
 async function criarReserva(casa, from, input) {
   const { nome, data, hora, pessoas, setor, cpf, email, nascimento } = input
   if (pessoas > 49) {
-    await upConversa(casa.id, from, { handoff: true })
+    await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
     await sendText(from, `Que ótimo, um grupo grande! 🎉 Como é bastante gente, fazemos um *atendimento personalizado*. O responsável do *${casa.nome}* já vai falar com você por aqui. 🙌`)
     await avisarGerente(casa, from, `quer reservar para ${pessoas} pessoas (GRUPO GRANDE +49)`)
     return { ok: false, grupo_grande: true, mensagem: 'Handoff grupo grande. NÃO confirme.' }
   }
-  const amb = (await sb.from('ambientes').select('id,nome').eq('casa_id', casa.id).ilike('nome', setor).maybeSingle()).data
-          ?? (await sb.from('ambientes').select('id,nome').eq('casa_id', casa.id).ilike('nome', `%${setor}%`).maybeSingle()).data
-  if (!amb) return { ok: false, erro: `Setor "${setor}" não encontrado.` }
+  // setor pode ter 2 linhas (capacidade por dia, ex. "Salao Central" semana/fds) — escolhe a linha do dia da reserva
+  const dowR = new Date(data + 'T12:00:00Z').getUTCDay()
+  let cands = (await sb.from('ambientes').select('id,nome,dias_semana').eq('casa_id', casa.id).eq('ativo', true).ilike('nome', setor)).data ?? []
+  if (!cands.length) cands = (await sb.from('ambientes').select('id,nome,dias_semana').eq('casa_id', casa.id).eq('ativo', true).ilike('nome', `%${setor}%`)).data ?? []
+  const amb = cands.find((a) => Array.isArray(a.dias_semana) && a.dias_semana.includes(dowR)) ?? cands.find((a) => !a.dias_semana || !a.dias_semana.length)
+  if (!amb) return { ok: false, erro: `Setor "${setor}" não encontrado${cands.length ? ' para esse dia da semana' : ''}.` }
   const cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null
   const up = await sb.from('clientes').upsert({ casa_id: casa.id, nome, telefone: from, cpf: cpfLimpo, email: email ?? null, data_nascimento: nascimento ?? null }, { onConflict: 'casa_id,telefone' }).select('id').single()
   const ins = await sb.from('reservas').insert({ casa_id: casa.id, cliente_id: up.data?.id ?? null, nome, telefone: from, cpf: cpfLimpo, email: email ?? null, data_nascimento: nascimento ?? null, data, hora: hora ?? null, ambiente_id: amb.id, qtd_pessoas: pessoas, confirmacoes_necessarias: pessoas, origem: 'whatsapp', status: 'confirmada', confirmada_em: new Date().toISOString() }).select('token').single()
@@ -193,6 +203,9 @@ Hoje é ${hoje} (ISO: ${hojeISO}). Resolva datas relativas a partir de hoje. Esc
 SETORES (min a max por reserva):
 ${ambientes.map((a) => `- ${a.nome}: ${a.capacidade_min_reserva} a ${a.capacidade_max_reserva ?? a.limite_pessoas}`).join('\n')}
 HORÁRIOS variam por dia — NUNCA invente, use consultar_disponibilidade.
+HORÁRIO FORA DA LISTA: se o cliente pedir um horário depois do último da lista, NÃO diga que "não está disponível" — explique que naquele dia pegamos reservas só até o ÚLTIMO horário da lista (diga qual é) e ofereça esse último horário.
+Se vier "horarios_por_setor", esses horários extras valem SÓ para o setor indicado — deixe isso claro ao oferecer.
+Se vier "aviso", transmita o texto ao cliente UMA vez quando a reserva/consulta cair na janela indicada.
 EVENTOS: se vier "evento", avise com entusiasmo (título, descrição, menu/preço).
 ${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}
 REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Confirme o resumo e SÓ DEPOIS chame criar_reserva.` }]
@@ -356,10 +369,12 @@ async function gerarFlyerGemini(selfie, ctx, ocasiao, extra) {
   if (fundo) parts.push(fundo)
   if (selfie) parts.push({ inline_data: { mime_type: selfie.mime, data: selfie.b64 } })
   parts.push({ text: prompt })
+  if (!GEMINI_KEY) { console.error('flyer: GEMINI_KEY/GEMINI_FLYER_KEY não setada no ambiente'); return null }
   try {
     const data = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { imageConfig: { aspectRatio: '9:16' } } }) })).json()
     for (const p of (data?.candidates?.[0]?.content?.parts ?? [])) { const d = p.inlineData?.data ?? p.inline_data?.data; if (d) return { b64: d } }
-  } catch (_) {}
+    console.error('flyer: Gemini respondeu sem imagem:', JSON.stringify(data).slice(0, 400))
+  } catch (e) { console.error('flyer: exceção Gemini:', e.message) }
   return null
 }
 async function gerarEnviarFlyer(casa, from, selfie, ctx, ocasiao, extra) {
@@ -573,7 +588,7 @@ async function processarMensagem(body) {
 
     // ---- pediu atendente ----
     if (/atendente|humano|especialista|pessoa de verdade|falar com (algu[eé]m|uma pessoa|um humano|a gente|gerente)/i.test(texto) || intentDoTexto(texto) === 'atendente') {
-      await upConversa(casa.id, from, { handoff: true })
+      await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
       await sendText(from, `Claro! 🙂 Só um instante — um atendente do *${casa.nome}* vai continuar por aqui. Pode escrever sua mensagem.`)
       await avisarGerente(casa, from, 'pediu para falar com um atendente'); return
     }

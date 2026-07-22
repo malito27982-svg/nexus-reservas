@@ -50,7 +50,7 @@ function render(){
     return `<div class="q"><div class="qt">${i+1}. ${esc(p.q)}</div>${inner}</div>`;
   }).join('');
   document.getElementById('app').innerHTML=
-    `<img src="https://lucasmalito.github.io/nexus-reservas/logo.png" onerror="this.style.display='none'">
+    `<img src="https://reservas.plionai.com.br/logo.png" onerror="this.style.display='none'">
      <h1>${esc(pesquisa.titulo)}</h1><p class="muted">Leva menos de 1 minuto 🙂</p>${qs}
      <button class="send" onclick="enviar()">Enviar resposta</button><div id="msg" class="muted" style="margin-top:10px;"></div>`;
 }
@@ -63,7 +63,7 @@ async function enviar(){
   const {data,error}=await sb.rpc('responder_pesquisa',{p_slug:slug,p_respondente:respondente,p_respostas:respostas,p_nps:nps});
   const msg=document.getElementById('msg');
   if(error||!data||!data.ok){ msg.innerHTML='<span style="color:#f87171">Erro ao enviar: '+esc((error&&error.message)||(data&&data.erro)||'')+'</span>'; return; }
-  document.getElementById('app').innerHTML='<img src="https://lucasmalito.github.io/nexus-reservas/logo.png" onerror="this.style.display=\'none\'"><h1>Obrigado! 🍻</h1><p class="muted">Sua resposta foi registrada. Agradecemos demais o seu tempo!</p>';
+  document.getElementById('app').innerHTML='<img src="https://reservas.plionai.com.br/logo.png" onerror="this.style.display=\'none\'"><h1>Obrigado! 🍻</h1><p class="muted">Sua resposta foi registrada. Agradecemos demais o seu tempo!</p>';
 }
 init();
 </script>
