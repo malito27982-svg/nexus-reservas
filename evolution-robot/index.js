@@ -354,27 +354,34 @@ async function finalizarPedido(casa, from, input) {
 }
 
 // ===================== FLYER (Gemini) =====================
+// fetch com timeout: sem isso, uma chamada travada pendura o flyer pra sempre (bug visto 22/07)
+async function fetchTimeout(url, opts = {}, ms = 60000) {
+  const ac = new AbortController(); const t = setTimeout(() => ac.abort(), ms)
+  try { return await fetch(url, { ...opts, signal: ac.signal }) } finally { clearTimeout(t) }
+}
 async function imagemApropriada(b64, mime) {
   try {
-    const data = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: 'Esta imagem tem nudez, conteúdo sexual, violência explícita ou algo impróprio para um flyer público de bar? Responda SOMENTE SIM ou NAO.' }] }] }) })).json()
+    const data = await (await fetchTimeout(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: 'Esta imagem tem nudez, conteúdo sexual, violência explícita ou algo impróprio para um flyer público de bar? Responda SOMENTE SIM ou NAO.' }] }] }) }, 30000)).json()
     const txt = (data?.candidates?.[0]?.content?.parts ?? []).map((p) => p.text || '').join(' ').toUpperCase(); return !txt.includes('SIM')
   } catch (_) { return true }
 }
 async function gerarFlyerGemini(selfie, ctx, ocasiao, extra) {
   const hora = ctx?.hora ? String(ctx.hora).slice(0, 5) : ''
   let fundo = null
-  try { const rf = await fetch(LINK_BASE + '/bar-fundo.jpg'); if (rf.ok) { const b = Buffer.from(await rf.arrayBuffer()); fundo = { inline_data: { mime_type: 'image/jpeg', data: b.toString('base64') } } } } catch (_) {}
+  try { const rf = await fetchTimeout(LINK_BASE + '/bar-fundo.jpg', {}, 15000); if (rf.ok) { const b = Buffer.from(await rf.arrayBuffer()); fundo = { inline_data: { mime_type: 'image/jpeg', data: b.toString('base64') } } } } catch (e) { console.error('flyer: fundo falhou', e.message) }
+  console.log(`flyer: gerando (fundo=${!!fundo}, selfie=${!!selfie})`)
   const prompt = `Crie um FLYER VERTICAL 9:16 de RESERVA CONFIRMADA do "${ctx?.casa || 'Botequim São Paulo'}".${fundo ? ' Use a ' + (selfie ? 'PRIMEIRA ' : '') + 'imagem (ambiente REAL do bar) como CENÁRIO/FUNDO.' : ''}${selfie ? ' A PESSOA da ' + (fundo ? 'SEGUNDA ' : '') + 'foto é o ELEMENTO PRINCIPAL: mostre o ROSTO GRANDE, em DESTAQUE e FIEL (rosto real dela).' : ''}${ocasiao ? ' CONTEXTO: ' + ocasiao + '.' : ''} Estilo moderno, cores quentes, boteco premium noturno. Tipografia legível com: "RESERVA CONFIRMADA", nome "${ctx?.nome || ''}", data "${ctx?.data || ''}${hora ? ' às ' + hora : ''}" e setor "${ctx?.setor || ''}".${extra ? ' AJUSTE: ' + extra + '.' : ''}`
   const parts = []
   if (fundo) parts.push(fundo)
   if (selfie) parts.push({ inline_data: { mime_type: selfie.mime, data: selfie.b64 } })
   parts.push({ text: prompt })
   if (!GEMINI_KEY) { console.error('flyer: GEMINI_KEY/GEMINI_FLYER_KEY não setada no ambiente'); return null }
+  const t0 = Date.now()
   try {
-    const data = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { imageConfig: { aspectRatio: '9:16' } } }) })).json()
-    for (const p of (data?.candidates?.[0]?.content?.parts ?? [])) { const d = p.inlineData?.data ?? p.inline_data?.data; if (d) return { b64: d } }
-    console.error('flyer: Gemini respondeu sem imagem:', JSON.stringify(data).slice(0, 400))
-  } catch (e) { console.error('flyer: exceção Gemini:', e.message) }
+    const data = await (await fetchTimeout(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { imageConfig: { aspectRatio: '9:16' } } }) }, 90000)).json()
+    for (const p of (data?.candidates?.[0]?.content?.parts ?? [])) { const d = p.inlineData?.data ?? p.inline_data?.data; if (d) { console.log(`flyer: imagem OK em ${Date.now() - t0}ms`); return { b64: d } } }
+    console.error(`flyer: Gemini respondeu sem imagem (${Date.now() - t0}ms):`, JSON.stringify(data).slice(0, 400))
+  } catch (e) { console.error(`flyer: exceção Gemini (${Date.now() - t0}ms):`, e.message) }
   return null
 }
 async function gerarEnviarFlyer(casa, from, selfie, ctx, ocasiao, extra) {
@@ -495,6 +502,14 @@ app.post('/painel/send', async (req, res) => {
   h.push({ role: 'assistant', content: texto })
   await sb.from('conversas').update({ historico: h, updated_at: new Date().toISOString() }).eq('casa_id', casa_id).eq('telefone', telefone)
   res.json({ ok: !!r })
+})
+
+// diagnóstico do flyer sem WhatsApp (curl com x-webhook-secret) — testa a geração isolada no servidor
+app.get('/debug/flyer', async (req, res) => {
+  if (WEBHOOK_SECRET && req.headers['x-webhook-secret'] !== WEBHOOK_SECRET) return res.sendStatus(401)
+  const t0 = Date.now()
+  const flyer = await gerarFlyerGemini(null, { nome: 'Teste', data: '25/07', hora: '19:00', setor: 'Varanda', casa: 'Botequim Santo André' }, 'teste interno de diagnóstico')
+  res.json({ ok: !!flyer, ms: Date.now() - t0, bytes: flyer ? flyer.b64.length : 0 })
 })
 
 // ===================== WEBHOOK =====================
