@@ -950,7 +950,7 @@ async function setStatus(id,st){
   const patch={status:st}, now=new Date().toISOString();
   if(st==='confirmada') patch.confirmada_em=now;
   if(st==='checkin')    patch.checkin_em=now;
-  if(st==='cancelado')  patch.cancelado_em=now;
+  if(st==='cancelado'){ patch.cancelado_em=now; const m=prompt('Motivo do cancelamento (opcional):'); if(m&&m.trim()) patch.motivo_cancelamento=m.trim(); }
   const {error}=await sb.from('reservas').update(patch).eq('id',id);
   if(error){ alert('Erro: '+error.message); return; }
   loadReservas();

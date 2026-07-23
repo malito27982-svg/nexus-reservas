@@ -109,6 +109,10 @@ async function upConversa(casa_id, telefone, patch) {
 async function gravaNome(casa_id, telefone, nome) {
   if (nome && nome.trim()) await sb.from('conversas').update({ nome }).eq('casa_id', casa_id).eq('telefone', telefone).is('nome', null)
 }
+async function avisarGerenteTexto(casaId, texto) {
+  const c = (await sb.from('casas').select('gerente_whatsapp').eq('id', casaId).maybeSingle()).data
+  if (c?.gerente_whatsapp) await sendText(c.gerente_whatsapp, texto)
+}
 async function avisarGerente(casa, from, motivo) {
   const c = (await sb.from('casas').select('gerente_whatsapp,nome,nome_curto').eq('id', casa.id).maybeSingle()).data
   if (!c?.gerente_whatsapp) return
@@ -611,13 +615,21 @@ async function sweepLembretes() {
       const casa = await getCasaPorId(r.casa_id); if (!casa) continue
       const inst = instDaCasa(casa.slug)
       const horaTxt = String(r.hora).slice(0, 5), dataTxt = String(r.data).split('-').reverse().join('/')
+      // evento/música ao vivo no dia da reserva (Experiências ✨ com "divulgar") entra no lembrete
+      let evento = ''
+      try {
+        const dowL = new Date(r.data + 'T12:00:00Z').getUTCDay()
+        const exps = (await sb.from('experiencias').select('titulo,divulgar,data,dias_semana').eq('casa_id', r.casa_id).eq('ativo', true)).data ?? []
+        const exp = exps.find((e) => e.divulgar && ((e.data && e.data === r.data) || (!e.data && Array.isArray(e.dias_semana) && e.dias_semana.includes(dowL))))
+        if (exp) evento = `\n\n🎶 E tem mais: *${exp.titulo}* nesse dia!`
+      } catch (_) {}
       if (horasAte <= 1.05 && !r.lembrete_1h) {
-        const ok = await als.run({ inst }, () => sendText(r.telefone, `⏰ Falta pouco, ${r.nome}! Sua mesa no *${casa.nome}* está garantida hoje às *${horaTxt}* (${r.qtd_pessoas} pessoas). Até já! 🍻`))
+        const ok = await als.run({ inst }, () => sendText(r.telefone, `⏰ Falta pouco, ${r.nome}! Sua mesa no *${casa.nome}* está garantida hoje às *${horaTxt}* (${r.qtd_pessoas} pessoas).${evento} Até já! 🍻`))
         if (ok) { await sb.from('reservas').update({ lembrete_1h: new Date().toISOString() }).eq('id', r.id); acoes.push(`1h:${r.id}`) }
       } else if (horasAte <= 24 && horasAte > 1.5 && !r.lembrete_24h) {
         // reserva recém-criada não precisa de lembrete (a pessoa acabou de reservar)
         if (r.created_at && agora - new Date(r.created_at).getTime() < 2 * 3600000) continue
-        const ok = await als.run({ inst }, () => sendText(r.telefone, `Olá, ${r.nome}! 👋 Passando pra lembrar da sua reserva no *${casa.nome}*: *${dataTxt} às ${horaTxt}* — ${r.qtd_pessoas} pessoas.\n\nPosso *confirmar sua presença*? Responda *SIM* pra confirmar ou *NÃO* pra cancelar. 🍻`))
+        const ok = await als.run({ inst }, () => sendText(r.telefone, `Olá, ${r.nome}! 👋 Passando pra lembrar da sua reserva no *${casa.nome}*: *${dataTxt} às ${horaTxt}* — ${r.qtd_pessoas} pessoas.${evento}\n\nPosso *confirmar sua presença*? Responda *SIM* pra confirmar ou *NÃO* pra cancelar. 🍻`))
         if (ok) {
           await sb.from('reservas').update({ lembrete_24h: new Date().toISOString() }).eq('id', r.id)
           await getConversa(r.casa_id, r.telefone)
@@ -693,21 +705,45 @@ async function processarMensagem(body) {
       await sendText(from, MENU_TXT(casa.nome)); return
     }
 
+    // ---- pediu atendente (roda ANTES de flyer/lembrete: humano tem prioridade — bug do print 23/07) ----
+    // intentDoTexto ('6' etc.) só vale quando estamos no menu; senão "6 pessoas" viraria handoff
+    if (/atendente|humano|especialista|pessoa de verdade|falar com (algu[eé]m|uma pessoa|um humano|a gente|gerente)/i.test(texto) || (conv.aguardando === 'menu' && intentDoTexto(texto) === 'atendente')) {
+      await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true, flyer_etapa: null, flyer_feedback: false })
+      await sendText(from, `Claro! 🙂 Só um instante — um atendente do *${casa.nome}* vai continuar por aqui. Pode escrever sua mensagem.`)
+      await avisarGerente(casa, from, 'pediu para falar com um atendente'); return
+    }
+
     // ---- resposta ao lembrete de confirmação (enviado 24h antes) ----
     if (conv.aguardando === 'lembrete' && conv.lembrete_reserva_id) {
       const rid = conv.lembrete_reserva_id
       const limpa = { aguardando: null, lembrete_reserva_id: null }
-      if (/^(sim|s|confirmo|confirmado|confirmar?|pode confirmar|vamos|vou sim|vou|estarei|claro|com certeza|ok|isso|👍)\s*[!.🍻🎉]*$/i.test(texto.trim())) {
+      // NÃO primeiro ("não confirmo" contém "confirmo" e cairia no SIM)
+      if (/^(n[ãa]o|n)\b/i.test(texto.trim()) || /cancel|desmarc|n[ãa]o vou (poder|conseguir|dar|ir)/i.test(texto)) {
+        await sb.from('reservas').update({ status: 'cancelado', cancelado_em: new Date().toISOString() }).eq('id', rid)
+        await upConversa(casa.id, from, { aguardando: 'motivo_cancel' }) // mantém lembrete_reserva_id p/ anexar o motivo
+        const rr = (await sb.from('reservas').select('nome,data,hora,qtd_pessoas').eq('id', rid).maybeSingle()).data
+        if (rr) await avisarGerenteTexto(casa.id, `❌ *Cancelamento* — ${rr.nome} cancelou a reserva de ${String(rr.data).split('-').reverse().join('/')}${rr.hora ? ' às ' + String(rr.hora).slice(0, 5) : ''} (${rr.qtd_pessoas}p) pelo lembrete do WhatsApp. A vaga foi liberada.`)
+        await sendText(from, 'Tudo bem, sua reserva foi cancelada 🙏 Pode me contar em uma frase o *motivo*? (nos ajuda a melhorar) E se quiser remarcar, é só responder *reservas*.'); return
+      }
+      if (/^(sim|s|claro|ok|isso|👍)\b/i.test(texto.trim()) || /confirm(o|a|ar|ado|e)\b|com certeza|pode contar|estarei|vou sim|vamos sim/i.test(texto)) {
         await sb.from('reservas').update({ status: 'confirmada', confirmada_em: new Date().toISOString() }).eq('id', rid)
         await upConversa(casa.id, from, limpa)
         await sendText(from, 'Presença confirmada! 🎉 Sua mesa estará te esperando. Até lá! 🍻'); return
       }
-      if (/^(n[ãa]o|n|cancela(r)?|desmarca(r)?|n[ãa]o vou|n[ãa]o consigo|n[ãa]o poderei|n[ãa]o d[áa]|infelizmente n[ãa]o)\s*[!.🙏]*$/i.test(texto.trim())) {
-        await sb.from('reservas').update({ status: 'cancelado', cancelado_em: new Date().toISOString() }).eq('id', rid)
-        await upConversa(casa.id, from, limpa)
-        await sendText(from, 'Tudo bem, sua reserva foi cancelada 🙏 Quando quiser remarcar, é só responder *reservas*. Até a próxima! 🍻'); return
-      }
       await upConversa(casa.id, from, limpa) // mudou de assunto — segue o fluxo normal
+    }
+
+    // ---- motivo do cancelamento (resposta à pergunta acima) ----
+    if (conv.aguardando === 'motivo_cancel' && conv.lembrete_reserva_id) {
+      const rid = conv.lembrete_reserva_id
+      await upConversa(casa.id, from, { aguardando: null, lembrete_reserva_id: null })
+      if (!/^reservas?\s*$/i.test(texto.trim())) {
+        await sb.from('reservas').update({ motivo_cancelamento: texto.slice(0, 500) }).eq('id', rid)
+        const rr = (await sb.from('reservas').select('nome,data').eq('id', rid).maybeSingle()).data
+        if (rr) await avisarGerenteTexto(casa.id, `💬 Motivo do cancelamento de ${rr.nome} (${String(rr.data).split('-').reverse().join('/')}): "${texto.slice(0, 300)}"`)
+        await sendText(from, 'Obrigado por contar 🙏 Esperamos te ver em breve no Botequim! 🍻'); return
+      }
+      // cliente respondeu "reservas" = quer remarcar — segue pro fluxo normal
     }
 
     // ---- fluxo do flyer (texto) ----
@@ -758,12 +794,7 @@ async function processarMensagem(body) {
       await upConversa(casa.id, from, { historico: hist }); return
     }
 
-    // ---- pediu atendente ----
-    if (/atendente|humano|especialista|pessoa de verdade|falar com (algu[eé]m|uma pessoa|um humano|a gente|gerente)/i.test(texto) || intentDoTexto(texto) === 'atendente') {
-      await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
-      await sendText(from, `Claro! 🙂 Só um instante — um atendente do *${casa.nome}* vai continuar por aqui. Pode escrever sua mensagem.`)
-      await avisarGerente(casa, from, 'pediu para falar com um atendente'); return
-    }
+    // (pedido de atendente foi movido pro TOPO do fluxo — prioridade sobre flyer/lembrete)
 
     // ---- menu / recomeço ----
     // (reset por saudação movido pra ANTES dos fluxos de flyer/delivery — ver acima)
