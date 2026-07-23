@@ -91,6 +91,13 @@ async function getCasa(slug) {
   _casas[k] = (await q.limit(1).maybeSingle()).data
   return _casas[k]
 }
+async function getCasaPorId(id) {
+  const hit = Object.values(_casas).find((c) => c && c.id === id)
+  if (hit) return hit
+  const c = (await sb.from('casas').select(CASA_COLS).eq('id', id).maybeSingle()).data
+  if (c) _casas[c.slug] = c
+  return c
+}
 async function getConversa(casa_id, telefone) {
   const ex = (await sb.from('conversas').select('*').eq('casa_id', casa_id).eq('telefone', telefone).maybeSingle()).data
   if (ex) return ex
@@ -517,6 +524,121 @@ app.get('/debug/flyer', async (req, res) => {
   res.json({ ok: !!flyer, ms: Date.now() - t0, bytes: flyer ? flyer.b64.length : 0, envio: req.query.send ? !!envio : undefined })
 })
 
+// ===================== PÓS-HANDOFF: verificação de reserva =====================
+// Ao devolver a conversa pro robô, a IA lê o papo do atendente humano e confere se a
+// reserva combinada realmente subiu no sistema. Se não subiu, cria sozinha.
+async function extrairReservaDoHistorico(casa, historico) {
+  const h = (Array.isArray(historico) ? historico : []).slice(-40).filter((m) => typeof m.content === 'string' && m.content.trim())
+  if (!h.length) return null
+  const transcript = h.map((m) => `${m.role === 'user' ? 'CLIENTE' : 'ATENDENTE'}: ${m.content}`).join('\n')
+  const hojeISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+  // calendário explícito dos próximos 14 dias — sem isso o modelo erra a conta de "sábado" (visto no teste de 23/07)
+  const calendario = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(Date.now() + i * 86400000)
+    const semana = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long' })
+    const iso = d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    return `${i === 0 ? 'HOJE, ' : i === 1 ? 'amanhã, ' : ''}${semana} = ${iso}`
+  }).join('\n')
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: MODEL, max_tokens: 400,
+        system: `Você analisa a conversa de WhatsApp entre um CLIENTE e o ATENDENTE humano do bar "${casa.nome}". Hoje é ${hojeISO}. Verifique se eles COMBINARAM uma reserva de mesa (data de hoje em diante). Responda SOMENTE um JSON válido, sem markdown: {"combinou":boolean,"nome":string|null,"data":"AAAA-MM-DD"|null,"hora":"HH:MM"|null,"pessoas":number|null,"setor":string|null,"nascimento":"AAAA-MM-DD"|null}. combinou=true SÓ se cliente e atendente fecharam claramente pelo menos DATA e Nº DE PESSOAS. Para datas relativas ("amanhã", "sábado"), use EXATAMENTE este calendário (não calcule por conta própria):\n${calendario}\nCampos não ditos = null.`,
+        messages: [{ role: 'user', content: transcript }] }),
+    })
+    const data = await res.json()
+    const txt = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('')
+    const m = txt.match(/\{[\s\S]*\}/)
+    return m ? JSON.parse(m[0]) : null
+  } catch (e) { console.error('extrairReserva exc', e.message); return null }
+}
+async function verificarReservaPosHandoff(casa, from, historico) {
+  const ext = await extrairReservaDoHistorico(casa, historico)
+  if (!ext || !ext.combinou) return { resultado: 'nada_combinado', msg: 'Não identifiquei reserva combinada na conversa — nada a registrar.' }
+  const fmt = (d) => String(d || '').split('-').reverse().join('/')
+  // já subiu no sistema?
+  if (ext.data) {
+    const ja = (await sb.from('reservas').select('id').eq('casa_id', casa.id).eq('telefone', from).eq('data', ext.data).in('status', ['pendente', 'confirmada'])).data ?? []
+    if (ja.length) return { resultado: 'ja_registrada', msg: `Reserva de ${fmt(ext.data)} já está no sistema. ✅` }
+  }
+  if (!ext.data || !ext.pessoas || !ext.nome) return { resultado: 'incompleta', extraido: ext, msg: `Foi combinada uma reserva mas faltou ${!ext.nome ? 'NOME' : !ext.data ? 'DATA' : 'Nº DE PESSOAS'} na conversa — registre manualmente no painel.` }
+  if (ext.pessoas > 49) return { resultado: 'grupo_grande', extraido: ext, msg: `Grupo grande (${ext.pessoas}p) — registre manualmente (atendimento personalizado).` }
+  let setor = ext.setor
+  if (!setor) {
+    const disp = await consultarDisponibilidade(casa, { data: ext.data, pessoas: ext.pessoas })
+    setor = disp?.setores_disponiveis?.[0]?.setor
+    if (!setor) return { resultado: 'incompleta', extraido: ext, msg: `Reserva combinada (${ext.pessoas}p em ${fmt(ext.data)}) mas nenhum setor com vaga — registre manualmente.` }
+  }
+  const r = await criarReserva(casa, from, { nome: ext.nome, data: ext.data, hora: ext.hora, pessoas: ext.pessoas, setor, nascimento: ext.nascimento })
+  if (!r.ok) return { resultado: 'erro', extraido: ext, msg: `Tentei criar e falhou: ${r.erro || '?'} — registre manualmente.` }
+  const enviadas = [`✅ Prontinho, ${ext.nome}! Sua reserva no *${casa.nome}* está registrada: *${fmt(ext.data)}${ext.hora ? ' às ' + ext.hora : ''}*, ${ext.pessoas} pessoas — ${setor}. Te esperamos! 🍻`, ...(r._followups ?? [])]
+  for (const t of enviadas) await sendText(from, t)
+  const conv2 = (await sb.from('conversas').select('historico').eq('casa_id', casa.id).eq('telefone', from).maybeSingle()).data
+  const hh = Array.isArray(conv2?.historico) ? conv2.historico : []
+  for (const t of enviadas) hh.push({ role: 'assistant', content: t })
+  await upConversa(casa.id, from, { historico: hh })
+  return { resultado: 'criada', msg: `A reserva combinada NÃO estava no sistema — criei agora: ${ext.nome}, ${ext.pessoas}p, ${fmt(ext.data)}${ext.hora ? ' às ' + ext.hora : ''} (${setor}). Cliente avisado no WhatsApp. 🤖` }
+}
+// devolver a conversa ao robô (chamado pelo painel) + verificação automática
+app.post('/painel/devolver', async (req, res) => {
+  const u = await exigeLogin(req, res); if (!u) return
+  const { casa_id, telefone } = req.body || {}
+  if (!casa_id || !telefone) return res.status(400).json({ ok: false, erro: 'casa_id e telefone são obrigatórios.' })
+  if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
+  const casa = await getCasaPorId(casa_id)
+  if (!casa) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
+  const conv = (await sb.from('conversas').select('historico').eq('casa_id', casa_id).eq('telefone', telefone).maybeSingle()).data
+  await sb.from('conversas').update({ handoff: false, handoff_aguardando: false, updated_at: new Date().toISOString() }).eq('casa_id', casa_id).eq('telefone', telefone)
+  const check = await als.run({ inst: instDaCasa(casa.slug) }, () => verificarReservaPosHandoff(casa, telefone, conv?.historico))
+  res.json({ ok: true, ...check })
+})
+
+// ===================== LEMBRETES 24h / 1h =====================
+// Varredura a cada 5 min: 24h antes pede confirmação (SIM/NÃO); 1h antes só lembra.
+async function sweepLembretes() {
+  const acoes = []
+  try {
+    const agora = Date.now()
+    const hojeISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    const amanhaISO = new Date(agora + 26 * 3600000).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    const rs = (await sb.from('reservas').select('id,casa_id,nome,telefone,data,hora,qtd_pessoas,ambiente_id,lembrete_24h,lembrete_1h,created_at').in('status', ['pendente', 'confirmada']).gte('data', hojeISO).lte('data', amanhaISO)).data ?? []
+    for (const r of rs) {
+      if (!r.hora || !r.telefone) continue
+      // horário do bar = America/Sao_Paulo (UTC-3 fixo, sem horário de verão desde 2019)
+      const quando = new Date(`${r.data}T${String(r.hora).slice(0, 8)}-03:00`).getTime()
+      const horasAte = (quando - agora) / 3600000
+      if (horasAte <= 0) continue
+      const casa = await getCasaPorId(r.casa_id); if (!casa) continue
+      const inst = instDaCasa(casa.slug)
+      const horaTxt = String(r.hora).slice(0, 5), dataTxt = String(r.data).split('-').reverse().join('/')
+      if (horasAte <= 1.05 && !r.lembrete_1h) {
+        const ok = await als.run({ inst }, () => sendText(r.telefone, `⏰ Falta pouco, ${r.nome}! Sua mesa no *${casa.nome}* está garantida hoje às *${horaTxt}* (${r.qtd_pessoas} pessoas). Até já! 🍻`))
+        if (ok) { await sb.from('reservas').update({ lembrete_1h: new Date().toISOString() }).eq('id', r.id); acoes.push(`1h:${r.id}`) }
+      } else if (horasAte <= 24 && horasAte > 1.5 && !r.lembrete_24h) {
+        // reserva recém-criada não precisa de lembrete (a pessoa acabou de reservar)
+        if (r.created_at && agora - new Date(r.created_at).getTime() < 2 * 3600000) continue
+        const ok = await als.run({ inst }, () => sendText(r.telefone, `Olá, ${r.nome}! 👋 Passando pra lembrar da sua reserva no *${casa.nome}*: *${dataTxt} às ${horaTxt}* — ${r.qtd_pessoas} pessoas.\n\nPosso *confirmar sua presença*? Responda *SIM* pra confirmar ou *NÃO* pra cancelar. 🍻`))
+        if (ok) {
+          await sb.from('reservas').update({ lembrete_24h: new Date().toISOString() }).eq('id', r.id)
+          await getConversa(r.casa_id, r.telefone)
+          await sb.from('conversas').update({ aguardando: 'lembrete', lembrete_reserva_id: r.id, updated_at: new Date().toISOString() }).eq('casa_id', r.casa_id).eq('telefone', r.telefone)
+          acoes.push(`24h:${r.id}`)
+        }
+      }
+    }
+    if (acoes.length) console.log('lembretes enviados:', acoes.join(' '))
+  } catch (e) { console.error('lembretes exc', e.message) }
+  return acoes
+}
+setInterval(sweepLembretes, 5 * 60 * 1000)
+setTimeout(sweepLembretes, 20000) // 1ª varredura logo após subir
+
+// dispara a varredura na hora (teste/diagnóstico)
+app.get('/debug/lembretes', async (req, res) => {
+  if (WEBHOOK_SECRET && req.headers['x-webhook-secret'] !== WEBHOOK_SECRET) return res.sendStatus(401)
+  res.json({ ok: true, acoes: await sweepLembretes() })
+})
+
 // ===================== WEBHOOK =====================
 function extrairTexto(m = {}) { return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '' }
 
@@ -569,6 +691,23 @@ async function processarMensagem(body) {
     if (/^(menu|voltar|in[ií]cio|inicio|come[çc]ar|recome[çc]ar|oi+|ol[aá]|bom dia|boa tarde|boa noite|opa|eae|e a[ií])\s*[!.?]*$/i.test(texto.trim())) {
       await upConversa(casa.id, from, { modo: null, aguardando: 'menu', historico: [], saudou: true, flyer_etapa: null, flyer_feedback: false, flyer_count: 0, flyer_ocasiao: null })
       await sendText(from, MENU_TXT(casa.nome)); return
+    }
+
+    // ---- resposta ao lembrete de confirmação (enviado 24h antes) ----
+    if (conv.aguardando === 'lembrete' && conv.lembrete_reserva_id) {
+      const rid = conv.lembrete_reserva_id
+      const limpa = { aguardando: null, lembrete_reserva_id: null }
+      if (/^(sim|s|confirmo|confirmado|confirmar?|pode confirmar|vamos|vou sim|vou|estarei|claro|com certeza|ok|isso|👍)\s*[!.🍻🎉]*$/i.test(texto.trim())) {
+        await sb.from('reservas').update({ status: 'confirmada', confirmada_em: new Date().toISOString() }).eq('id', rid)
+        await upConversa(casa.id, from, limpa)
+        await sendText(from, 'Presença confirmada! 🎉 Sua mesa estará te esperando. Até lá! 🍻'); return
+      }
+      if (/^(n[ãa]o|n|cancela(r)?|desmarca(r)?|n[ãa]o vou|n[ãa]o consigo|n[ãa]o poderei|n[ãa]o d[áa]|infelizmente n[ãa]o)\s*[!.🙏]*$/i.test(texto.trim())) {
+        await sb.from('reservas').update({ status: 'cancelado', cancelado_em: new Date().toISOString() }).eq('id', rid)
+        await upConversa(casa.id, from, limpa)
+        await sendText(from, 'Tudo bem, sua reserva foi cancelada 🙏 Quando quiser remarcar, é só responder *reservas*. Até a próxima! 🍻'); return
+      }
+      await upConversa(casa.id, from, limpa) // mudou de assunto — segue o fluxo normal
     }
 
     // ---- fluxo do flyer (texto) ----

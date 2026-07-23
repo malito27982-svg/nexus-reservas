@@ -778,7 +778,16 @@ function closeAtend(){ document.getElementById('atendOverlay').classList.add('hi
 async function painel(op,extra){
   const tel=convAtual.telefone;
   if(op==='painel_assumir'){ const {error}=await sb.from('conversas').update({handoff:true,handoff_aguardando:false}).eq('casa_id',casaAtual.id).eq('telefone',tel); vigiaAtendimento(); return {ok:!error,erro:error&&error.message}; }
-  if(op==='painel_devolver'){ const {error}=await sb.from('conversas').update({handoff:false,handoff_aguardando:false}).eq('casa_id',casaAtual.id).eq('telefone',tel); vigiaAtendimento(); return {ok:!error,erro:error&&error.message}; }
+  if(op==='painel_devolver'){
+    // devolve via robô: ele confere se a reserva combinada no atendimento humano subiu no sistema (e cria se faltou)
+    const { data:{ session } }=await sb.auth.getSession();
+    try{
+      const r=await fetch(ROBOT_URL+'/painel/devolver',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((session&&session.access_token)||'')},body:JSON.stringify({casa_id:casaAtual.id,telefone:tel})});
+      const j=await r.json(); vigiaAtendimento(); return j;
+    }catch(e){ // robô fora do ar: devolve direto no banco (sem verificação)
+      const {error}=await sb.from('conversas').update({handoff:false,handoff_aguardando:false}).eq('casa_id',casaAtual.id).eq('telefone',tel); vigiaAtendimento(); return {ok:!error,erro:error&&error.message,msg:'Devolvido (robô fora do ar — verificação de reserva não rodou).'};
+    }
+  }
   if(op==='painel_send'){
     const { data:{ session } }=await sb.auth.getSession();
     try{ const r=await fetch(ROBOT_URL+'/painel/send',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((session&&session.access_token)||'')},body:JSON.stringify({casa_id:casaAtual.id,telefone:tel,texto:(extra&&extra.texto)||''})}); return await r.json(); }
@@ -787,7 +796,13 @@ async function painel(op,extra){
   return {ok:false,erro:'op desconhecida'};
 }
 async function assumir(){ await painel('painel_assumir'); await refreshAtend(); }
-async function devolver(){ await painel('painel_devolver'); await refreshAtend(); }
+async function devolver(){
+  const b=document.getElementById('atDevolver'); b.disabled=true; b.textContent='🤖 Verificando reserva...';
+  const r=await painel('painel_devolver');
+  b.disabled=false; b.textContent='🤖 Devolver ao robô';
+  if(r&&r.msg) alert('🤖 '+r.msg);
+  await refreshAtend();
+}
 async function enviarMsg(){
   const inp=document.getElementById('atInput'); const t=inp.value.trim(); if(!t) return;
   inp.value=''; document.getElementById('atSend').disabled=true;
