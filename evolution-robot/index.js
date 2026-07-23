@@ -45,7 +45,7 @@ async function evoPost(path, payload) {
   try {
     const r = await fetch(`${EVOLUTION_URL}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: APIKEY },
+      headers: { 'Content-Type': 'application/json', apikey: MASTER_KEY },
       body: JSON.stringify(payload),
     })
     if (!r.ok) console.error(`  ⚠️ ${path} ${r.status}`, (await r.text()).slice(0, 200))
