@@ -425,7 +425,7 @@ async function gerarEnviarFlyer(casa, from, selfie, ctx, ocasiao, extra) {
   const c = (await sb.from('conversas').select('flyer_count').eq('casa_id', casa.id).eq('telefone', from).maybeSingle()).data
   const novo = (c?.flyer_count ?? 0) + 1
   await upConversa(casa.id, from, { flyer_count: novo, flyer_feedback: true, flyer_etapa: null })
-  if (novo >= 3) await sendText(from, 'Pronto! 🎉 (último ajuste). Pode enviar aos convidados — te esperamos! 🍻')
+  if (novo >= 3) await sendText(from, 'Pronto! 🎉 (último ajuste). Pode enviar aos convidados. Ficou alguma *dúvida*? É só perguntar 🙂 Te esperamos! 🍻')
   else await sendText(from, 'Ficou bom? 😊 Quer alterar algo (ex: "mais escuro")? É só dizer. Se estiver ótimo, avise! 🙌')
 }
 
@@ -776,10 +776,31 @@ async function processarMensagem(body) {
     if (isImage) { await sendText(from, 'Recebi sua foto 🙂 Me conta por texto: pra quantas pessoas, que dia e horário?'); return }
     if (!texto.trim()) { await sendText(from, 'Por enquanto eu entendo texto e fotos 🙂'); return }
 
-    // saudação isolada SEMPRE reseta pro menu — roda ANTES de qualquer fluxo pendente (flyer/delivery/velho histórico)
-    if (/^(menu|voltar|in[ií]cio|inicio|come[çc]ar|recome[çc]ar|oi+e*|oie+|ol[aá]|bom dia|boa tarde|boa noite|opa|eae|e a[ií])\s*[!.?]*$/i.test(texto.trim())) {
-      await upConversa(casa.id, from, { modo: null, aguardando: 'menu', historico: [], saudou: true, flyer_etapa: null, flyer_feedback: false, flyer_count: 0, flyer_ocasiao: null })
-      await sendText(from, MENU_TXT(casa.nome)); return
+    // saudação isolada SEMPRE reseta a conversa — roda ANTES de qualquer fluxo pendente (flyer/delivery/velho histórico).
+    // Cliente com reserva FUTURA (QA Giovana 24/07): em vez do menu genérico, abre reconhecendo a reserva
+    // ("bem-vindo, quer falar sobre a reserva X?"); reserva já passada = menu normal. "menu" explícito = sempre menu.
+    {
+      const t9 = texto.trim()
+      const isMenuWord = /^(menu|voltar|in[ií]cio|inicio|come[çc]ar|recome[çc]ar)\s*[!.?]*$/i.test(t9)
+      const isGreeting = /^(oi+e*|oie+|ol[aá]|bom dia|boa tarde|boa noite|opa|eae|e a[ií])\s*[!.?]*$/i.test(t9)
+      if (isMenuWord || isGreeting) {
+        const reset = { modo: null, historico: [], saudou: true, flyer_etapa: null, flyer_feedback: false, flyer_count: 0, flyer_ocasiao: null }
+        let rAtiva = null
+        if (isGreeting && !isMenuWord) {
+          const hojeG = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+          rAtiva = (await sb.from('reservas').select('nome,data,hora,qtd_pessoas').eq('casa_id', casa.id).eq('telefone', from).gte('data', hojeG).in('status', ['pendente', 'confirmada']).order('data').limit(1).maybeSingle()).data
+        }
+        if (rAtiva) {
+          const DIAS9 = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado']
+          const diaSem = DIAS9[new Date(rAtiva.data + 'T12:00:00Z').getUTCDay()]
+          const dataTxt = String(rAtiva.data).split('-').reverse().join('/')
+          const oi = `Olá${rAtiva.nome ? ', ' + String(rAtiva.nome).split(' ')[0] : ''}! 👋 Que bom te ver de novo no *${casa.nome}*! Vi aqui que você já tem uma reserva marcada: 📅 *${diaSem}, ${dataTxt}${rAtiva.hora ? ' às ' + String(rAtiva.hora).slice(0, 5) : ''}* — ${rAtiva.qtd_pessoas} pessoas.\n\nQuer falar sobre ela? Me diz o que precisa (confirmar, alterar, convidados, flyer...) 🙂 Se for outro assunto, é só responder *menu*.`
+          await upConversa(casa.id, from, { ...reset, aguardando: null, historico: [{ role: 'assistant', content: oi }] })
+          await sendText(from, oi); return
+        }
+        await upConversa(casa.id, from, { ...reset, aguardando: 'menu' })
+        await sendText(from, MENU_TXT(casa.nome)); return
+      }
     }
 
     // ---- pediu atendente (roda ANTES de flyer/lembrete: humano tem prioridade — bug do print 23/07) ----
@@ -832,7 +853,7 @@ async function processarMensagem(body) {
 
     // ---- fluxo do flyer (texto) ----
     if (conv.flyer_etapa === 'ocasiao') {
-      if (/n[ãa]o quero|n[ãa]o precisa|sem flyer|depois|deixa pra l[áa]|n[ãa]o,? obrig/i.test(texto)) { await upConversa(casa.id, from, { flyer_etapa: null }); await sendText(from, 'Sem problemas! Qualquer coisa é só chamar. Te esperamos no Botequim! 🍻'); return }
+      if (/n[ãa]o quero|n[ãa]o precisa|sem flyer|depois|deixa pra l[áa]|n[ãa]o,? obrig/i.test(texto)) { await upConversa(casa.id, from, { flyer_etapa: null }); await sendText(from, 'Sem problemas! Sua reserva está garantida. Ficou alguma *dúvida* (horários, endereço, eventos)? É só perguntar 🙂 Te esperamos no Botequim! 🍻'); return }
       await upConversa(casa.id, from, { flyer_etapa: 'tema', flyer_ocasiao: texto }); await sendText(from, 'Ótimo! 🎉 Qual o *tema/estilo* do flyer? (elegante, retrô, neon, festa colorida...)'); return
     }
     if (conv.flyer_etapa === 'tema') { await upConversa(casa.id, from, { flyer_etapa: 'foto', flyer_ocasiao: (conv.flyer_ocasiao || '') + '. Tema: ' + texto }); await sendText(from, 'Perfeito! 🎨 Prefere COM a sua foto (envie uma selfie) ou só a ARTE do bar? Responda "minha foto" (e envie a selfie) ou "só o bar".'); return }
@@ -842,7 +863,7 @@ async function processarMensagem(body) {
       await sendText(from, 'Responda "minha foto" (e envie a selfie) ou "só o bar" 🙂'); return
     }
     if (conv.flyer_feedback) {
-      if (/([óo]tim|bom|boa|gostei|perfeit|obrigad|valeu|adorei|maravilh|top|show|amei|lind|fic(ou|o) bom)/i.test(texto)) { await upConversa(casa.id, from, { flyer_feedback: false }); await sendText(from, 'Que ótimo! 🎉 Pode enviar aos convidados. Te esperamos no Botequim! 🍻'); return }
+      if (/([óo]tim|bom|boa|gostei|perfeit|obrigad|valeu|adorei|maravilh|top|show|amei|lind|fic(ou|o) bom)/i.test(texto)) { await upConversa(casa.id, from, { flyer_feedback: false }); await sendText(from, 'Que ótimo! 🎉 Pode enviar aos convidados. Ficou alguma *dúvida*? É só perguntar 🙂 Te esperamos no Botequim! 🍻'); return }
       if ((conv.flyer_count ?? 0) >= 3) { await upConversa(casa.id, from, { flyer_feedback: false }); await sendText(from, 'Esse foi o limite de ajustes 🙂 O último ficou pronto e sua reserva está garantida!'); return }
       await sendText(from, 'Certo! Ajustando o flyer... 🎨'); await gerarEnviarFlyer(casa, from, null, conv.flyer_ctx || {}, conv.flyer_ocasiao, texto); return
     }
@@ -907,9 +928,13 @@ async function processarMensagem(body) {
       const linhas = rs.map((r) => `• ${String(r.data).split('-').reverse().join('/')}${r.hora ? ' às ' + String(r.hora).slice(0, 5) : ''} — ${r.qtd_pessoas}p — ${ambs.find((a) => a.id === r.ambiente_id)?.nome ?? ''} _(${r.status})_`).join('\n')
       await sendText(from, `📋 Suas reservas:\n\n${linhas}\n\nPara alterar/cancelar, responda *atendente*.`); return
     }
-    if (intent === 'reservas' || intent === 'duvidas') {
+    if (intent === 'reservas') {
       await upConversa(casa.id, from, { saudou: true, aguardando: null })
-      await sendText(from, `Perfeito! 🍻 Me informe: seu *nome*, *quantas pessoas*, a *data* e o *horário* desejados. (Também respondo dúvidas sobre horários, endereço e eventos.)`); return
+      await sendText(from, `Perfeito! 🍻 Me informe: seu *nome*, *quantas pessoas*, a *data* e o *horário* desejados.`); return
+    }
+    if (intent === 'duvidas') {
+      await upConversa(casa.id, from, { saudou: true, aguardando: null })
+      await sendText(from, `Claro! 🙂 Manda sua dúvida (horários, endereço, eventos, estacionamento...) que eu respondo.`); return
     }
 
     // ---- default: agente de RESERVA (também responde dúvidas) ----
