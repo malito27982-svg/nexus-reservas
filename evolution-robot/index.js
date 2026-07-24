@@ -226,6 +226,8 @@ async function runAgent(casa, from, history) {
   const futuras = (await sb.from('reservas').select('data,hora,qtd_pessoas,status,ambiente_id').eq('casa_id', casa.id).eq('telefone', from).gte('data', hojeD).in('status', ['pendente', 'confirmada']).order('data').limit(3)).data ?? []
   const futTxt = futuras.map((r) => `${DIAS_NOME[new Date(r.data + 'T12:00:00Z').getUTCDay()]} ${String(r.data).split('-').reverse().join('/')}${r.hora ? ' às ' + String(r.hora).slice(0, 5) : ''} — ${r.qtd_pessoas} pessoas${(() => { const a = ambientes.find((x) => x.id === r.ambiente_id); return a ? ' no ' + a.nome : '' })()} (${r.status})`).join('; ')
   const infos = (await sb.from('casa_infos').select('categoria,titulo,texto').eq('casa_id', casa.id).eq('status', 'aprovado')).data ?? []
+  // endereço REAL da casa (delivery_config) — sem isso no prompt a IA inventava endereço (SC "Santo Antônio 807", QA 24/07)
+  const dcfg = (await sb.from('delivery_config').select('endereco').eq('casa_id', casa.id).maybeSingle()).data
   const infosTxt = infos.map((i) => `- ${i.titulo}${i.categoria && i.categoria !== 'Geral' ? ` (${i.categoria})` : ''}: ${i.texto}`).join('\n')
   const hoje = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' })
   const hojeISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
@@ -238,6 +240,7 @@ AGENDA SEMANAL de reservas (janela de chegada por dia — use pra responder "que
 ${agenda}
 DIA FECHADO: se pedirem um dia marcado como fechado, diga os dias e horários REAIS da agenda acima — PROIBIDO inventar (ex.: nunca diga "só de sexta a domingo" se a agenda mostra outra coisa). Eventos especiais podem abrir dia extra — na dúvida, consultar_disponibilidade.
 HORÁRIOS exatos do dia podem variar (evento/lotação) — antes de fechar reserva, SEMPRE use consultar_disponibilidade.
+${dcfg?.endereco ? `ENDEREÇO da casa: ${dcfg.endereco}. Quando perguntarem onde fica, responda EXATAMENTE este endereço — PROIBIDO inventar rua ou número.` : 'ENDEREÇO: você NÃO tem o endereço cadastrado — se perguntarem, diga que o atendente confirma (responda "atendente") e NUNCA invente.'}
 HORÁRIO FORA DA LISTA: se o cliente pedir um horário depois do último da lista, NÃO diga que "não está disponível" — explique que naquele dia pegamos reservas só até o ÚLTIMO horário da lista (diga qual é) e ofereça esse último horário.
 Se vier "horarios_por_setor", esses horários extras valem SÓ para o setor indicado — deixe isso claro ao oferecer.
 Se vier "aviso", transmita o texto ao cliente UMA vez quando a reserva/consulta cair na janela indicada.
