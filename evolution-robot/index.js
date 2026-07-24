@@ -203,10 +203,22 @@ async function criarReserva(casa, from, input) {
 
 // ===================== AGENTE RESERVA =====================
 async function runAgent(casa, from, history) {
-  const ambientes = (await sb.from('ambientes').select('nome,limite_pessoas,capacidade_min_reserva,capacidade_max_reserva').eq('casa_id', casa.id).eq('ativo', true).order('ordem')).data ?? []
+  const ambientes = (await sb.from('ambientes').select('id,nome,limite_pessoas,capacidade_min_reserva,capacidade_max_reserva').eq('casa_id', casa.id).eq('ativo', true).order('ordem')).data ?? []
   // cliente recorrente: não pedir os dados de novo (spec Giovanna 22/07)
   const cli = (await sb.from('clientes').select('nome,data_nascimento').eq('casa_id', casa.id).eq('telefone', from).maybeSingle()).data
     ?? (await sb.from('clientes').select('nome,data_nascimento').eq('telefone', from).limit(1).maybeSingle()).data
+  // agenda semanal real (dos giros) — sem isso o modelo inventava "só sexta a domingo" (QA Giovana 24/07)
+  const girosAg = (await sb.from('giros').select('horario_min,horario_max,fechamento_antecipado,dias_semana,somente_ambiente').eq('casa_id', casa.id).eq('ativo', true)).data ?? []
+  const DIAS_NOME = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado']
+  const agenda = DIAS_NOME.map((nome, dow) => {
+    const gs = girosAg.filter((g) => (!g.dias_semana || !g.dias_semana.length || g.dias_semana.includes(dow)) && !g.somente_ambiente)
+    if (!gs.length) return `- ${nome}: fechado para reservas`
+    return `- ${nome}: ${gs.map((g) => `${String(g.horario_min).slice(0, 5)} às ${String(g.fechamento_antecipado ?? g.horario_max).slice(0, 5)}`).join(' e ')}`
+  }).join('\n')
+  // reservas futuras deste número: dúvida sobre reserva já feita NÃO pode virar pressão por reserva nova (QA Giovana 24/07)
+  const hojeD = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+  const futuras = (await sb.from('reservas').select('data,hora,qtd_pessoas,status,ambiente_id').eq('casa_id', casa.id).eq('telefone', from).gte('data', hojeD).in('status', ['pendente', 'confirmada']).order('data').limit(3)).data ?? []
+  const futTxt = futuras.map((r) => `${DIAS_NOME[new Date(r.data + 'T12:00:00Z').getUTCDay()]} ${String(r.data).split('-').reverse().join('/')}${r.hora ? ' às ' + String(r.hora).slice(0, 5) : ''} — ${r.qtd_pessoas} pessoas${(() => { const a = ambientes.find((x) => x.id === r.ambiente_id); return a ? ' no ' + a.nome : '' })()} (${r.status})`).join('; ')
   const infos = (await sb.from('casa_infos').select('categoria,titulo,texto').eq('casa_id', casa.id).eq('status', 'aprovado')).data ?? []
   const infosTxt = infos.map((i) => `- ${i.titulo}${i.categoria && i.categoria !== 'Geral' ? ` (${i.categoria})` : ''}: ${i.texto}`).join('\n')
   const hoje = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -216,13 +228,16 @@ async function runAgent(casa, from, history) {
 Hoje é ${hoje} (ISO: ${hojeISO}). Resolva datas relativas a partir de hoje. Escreva datas dd/mm ao cliente, nunca AAAA-MM-DD. Não repita perguntas já respondidas.
 SETORES (min a max por reserva):
 ${ambientes.map((a) => `- ${a.nome}: ${a.capacidade_min_reserva} a ${a.capacidade_max_reserva ?? a.limite_pessoas}`).join('\n')}
-HORÁRIOS variam por dia — NUNCA invente, use consultar_disponibilidade.
+AGENDA SEMANAL de reservas (janela de chegada por dia — use pra responder "que dias/horários vocês têm reserva?"):
+${agenda}
+DIA FECHADO: se pedirem um dia marcado como fechado, diga os dias e horários REAIS da agenda acima — PROIBIDO inventar (ex.: nunca diga "só de sexta a domingo" se a agenda mostra outra coisa). Eventos especiais podem abrir dia extra — na dúvida, consultar_disponibilidade.
+HORÁRIOS exatos do dia podem variar (evento/lotação) — antes de fechar reserva, SEMPRE use consultar_disponibilidade.
 HORÁRIO FORA DA LISTA: se o cliente pedir um horário depois do último da lista, NÃO diga que "não está disponível" — explique que naquele dia pegamos reservas só até o ÚLTIMO horário da lista (diga qual é) e ofereça esse último horário.
 Se vier "horarios_por_setor", esses horários extras valem SÓ para o setor indicado — deixe isso claro ao oferecer.
 Se vier "aviso", transmita o texto ao cliente UMA vez quando a reserva/consulta cair na janela indicada.
 EVENTOS: se vier "evento", avise com entusiasmo (título, descrição, menu/preço).
 ${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}
-${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
+${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}${futuras.length ? `RESERVA JÁ ATIVA neste número: ${futTxt} (o dia da semana informado aí é o CORRETO — não recalcule). Se a mensagem for dúvida/assunto sobre essa reserva (horário, convidados, mudança...), responda SOBRE ELA — NÃO trate como reserva nova e NÃO fique empurrando o cliente a reservar de novo. Pra alterar ou cancelar, oriente a responder "atendente".\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
   const tools = [
     { name: 'consultar_disponibilidade', description: 'Verifica data aberta e setores que comportam as pessoas.', input_schema: { type: 'object', properties: { data: { type: 'string' }, pessoas: { type: 'integer' } }, required: ['data', 'pessoas'] } },
     { name: 'criar_reserva', description: 'Cria a reserva. Só quando o cliente confirmar.', input_schema: { type: 'object', properties: { nome: { type: 'string' }, data: { type: 'string' }, hora: { type: 'string' }, pessoas: { type: 'integer' }, setor: { type: 'string' }, nascimento: { type: 'string', description: 'data de nascimento AAAA-MM-DD (obrigatória)' } }, required: ['nome', 'data', 'pessoas', 'setor', 'nascimento'] } },
@@ -654,6 +669,17 @@ app.get('/debug/lembretes', async (req, res) => {
 // ===================== WEBHOOK =====================
 function extrairTexto(m = {}) { return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '' }
 
+// dedup: a Evolution pode reentregar o MESMO messages.upsert (retry/append) e o robô respondia 2x (QA Giovana 24/07)
+const _seenMsg = new Map()
+function jaProcessada(id) {
+  if (!id) return false
+  const agora = Date.now()
+  for (const [k, t] of _seenMsg) if (agora - t > 10 * 60000) _seenMsg.delete(k)
+  if (_seenMsg.has(id)) return true
+  _seenMsg.set(id, agora)
+  return false
+}
+
 app.get('/', (_req, res) => res.json({ ok: true, robo: 'botequim', multi: Object.keys(CASA_MAP).length || 0 }))
 
 app.post('/webhook', async (req, res) => {
@@ -669,6 +695,7 @@ async function processarMensagem(body) {
     const d = body.data || {}; const key = d.key || {}; const jid = key.remoteJid || ''
     if (key.fromMe || jid === 'status@broadcast') return
     if (jid.endsWith('@g.us')) return
+    if (jaProcessada(key.id)) { console.log('↩️ msg duplicada ignorada', key.id); return }
     const from = jid.split('@')[0]
     const isImage = !!d.message?.imageMessage
     const texto = extrairTexto(d.message)
