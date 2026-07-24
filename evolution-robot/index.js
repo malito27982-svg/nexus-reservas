@@ -52,17 +52,20 @@ async function evoPost(path, payload) {
     return r.ok ? await r.json().catch(() => ({})) : null
   } catch (e) { console.error(`  ⚠️ ${path} exc`, e.message); return null }
 }
+// telefone digitado à mão no painel pode vir "(11) 94544-7227" ou sem o 55 — normaliza ANTES de enviar
+// (send com 11945447227 deu exists:false no log de 24/07)
+function normNum(n) { let d = String(n || '').replace(/\D/g, ''); if (d.length >= 10 && d.length <= 11 && !d.startsWith('55')) d = '55' + d; return d }
 async function sendText(numero, texto) {
-  return evoPost(`/message/sendText/${curInst()}`, { number: numero, text: texto, delay: rand(1500, 3500) })
+  return evoPost(`/message/sendText/${curInst()}`, { number: normNum(numero), text: texto, delay: rand(1500, 3500) })
 }
 async function enviarImagemLink(numero, url, caption) {
-  return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'image', media: url, caption: caption || '' })
+  return evoPost(`/message/sendMedia/${curInst()}`, { number: normNum(numero), mediatype: 'image', media: url, caption: caption || '' })
 }
 async function enviarImagemB64(numero, b64, caption) {
-  return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'image', mimetype: 'image/png', media: b64, caption: caption || '', fileName: 'flyer.png' })
+  return evoPost(`/message/sendMedia/${curInst()}`, { number: normNum(numero), mediatype: 'image', mimetype: 'image/png', media: b64, caption: caption || '', fileName: 'flyer.png' })
 }
 async function enviarDocumento(numero, url, filename, caption) {
-  return evoPost(`/message/sendMedia/${curInst()}`, { number: numero, mediatype: 'document', media: url, fileName: filename, caption: caption || '' })
+  return evoPost(`/message/sendMedia/${curInst()}`, { number: normNum(numero), mediatype: 'document', media: url, fileName: filename, caption: caption || '' })
 }
 // baixa base64 de uma midia recebida (selfie do flyer)
 async function baixarMidiaB64(dataMsg) {
