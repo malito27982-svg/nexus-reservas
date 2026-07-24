@@ -1043,8 +1043,18 @@ async function saveDet(){
 }
 
 // ===================== NOVA RESERVA =====================
+// setor com 2 linhas no banco (capacidade por dia, ex. Salão Central semana/fds) aparece UMA vez só;
+// na hora de salvar, a linha certa é escolhida pelo dia da reserva (QA Giovana 24/07 "dois salões centrais")
+function ambDedup(){ const seen={}; return ambientes.filter(a=>seen[a.nome]?false:(seen[a.nome]=1,true)); }
+function ambPorDia(ambId,dataStr){
+  const chosen=ambientes.find(a=>a.id===ambId); if(!chosen) return ambId;
+  const same=ambientes.filter(a=>a.nome===chosen.nome); if(same.length<2) return ambId;
+  const dow=new Date(dataStr+'T12:00:00').getDay();
+  const certa=same.find(a=>Array.isArray(a.dias_semana)&&a.dias_semana.includes(dow))||same.find(a=>!a.dias_semana||!a.dias_semana.length)||chosen;
+  return certa.id;
+}
 function openForm(){
-  document.getElementById('f_ambiente').innerHTML=ambientes.map(a=>`<option value="${a.id}">${esc(a.nome)}</option>`).join('');
+  document.getElementById('f_ambiente').innerHTML=ambDedup().map(a=>`<option value="${a.id}">${esc(a.nome)}</option>`).join('');
   document.getElementById('f_giro').innerHTML='<option value="">—</option>'+giros.map(g=>`<option value="${g.id}">${g.nome||''} ${g.horario_min.slice(0,5)}-${g.horario_max.slice(0,5)}</option>`).join('');
   document.getElementById('f_data').value=dataSel;
   ['f_nome','f_tel','f_hora','f_cpf','f_nasc','f_email','f_obs'].forEach(i=>document.getElementById(i).value='');
@@ -1061,7 +1071,7 @@ async function saveReserva(){
   const up=await sb.from('clientes').upsert(cliente,{onConflict:'casa_id,telefone'}).select('id').single();
   const reserva={ casa_id:casaAtual.id, cliente_id:up.data?up.data.id:null, nome, telefone:tel,
     email:val('f_email')||null, cpf:val('f_cpf')||null, data_nascimento:val('f_nasc')||null,
-    data:val('f_data'), hora:val('f_hora')||null, giro_id:val('f_giro')||null, ambiente_id:amb,
+    data:val('f_data'), hora:val('f_hora')||null, giro_id:val('f_giro')||null, ambiente_id:ambPorDia(amb,val('f_data')),
     qtd_pessoas:qtd, qtd_criancas:parseInt(val('f_kids')||'0',10), confirmacoes_necessarias:qtd, ocasiao:val('f_ocasiao')||null, origem:'painel',
     observacao:val('f_obs')||null, passante:document.getElementById('f_passante').checked,
     status:document.getElementById('f_passante').checked?'checkin':'confirmada' };
@@ -1161,16 +1171,32 @@ function filaActions(f){
   if(f.status==='chamado')    return A('b-green','sentado','Sentou')+A('b-red','desistiu','Desistiu');
   return A('b-slate','aguardando','Voltar p/ fila');
 }
+// notificações da fila no WhatsApp (QA Giovana 24/07): posição ao entrar, "é a sua vez" ao chamar,
+// e atualização de posição pra quem continua aguardando quando a fila anda
+function normTel(t){ let d=String(t||'').replace(/\D/g,''); if(!d) return null; if(d.length<=11&&!d.startsWith('55')) d='55'+d; return d; }
+async function wppSend(tel,texto){ const n=normTel(tel); if(!n) return; try{ await robo('POST','/painel/send',{casa_id:casaAtual.id,telefone:n,texto}); }catch(e){} }
+async function filaAguardando(){
+  const {data}=await sb.from('fila_espera').select('id,nome,telefone').eq('casa_id',casaAtual.id).eq('data',dataSel).eq('status','aguardando').order('prioridade',{ascending:false}).order('entrou_em');
+  return data||[];
+}
+async function notificarPosicoes(){
+  const arr=await filaAguardando(); if(arr.length>20) return;
+  for(let i=0;i<arr.length;i++) await wppSend(arr[i].telefone,`📋 Atualização da fila do *${casaAtual.nome}*: você agora é o *${i+1}º* da fila. Já avisamos quando for sua vez! 🍻`);
+}
 async function setFila(id,st){
   const patch={status:st}, now=new Date().toISOString();
   if(st==='chamado') patch.chamado_em=now;
   if(st==='sentado') patch.sentou_em=now;
+  const f=fila.find(x=>x.id===id);
+  const saiuDaEspera=f&&f.status==='aguardando'&&st!=='aguardando';
   const {error}=await sb.from('fila_espera').update(patch).eq('id',id);
   if(error){ alert('Erro: '+error.message); return; }
+  if(f&&st==='chamado') wppSend(f.telefone,`🔔 *${f.nome}, é a sua vez!* Sua mesa no *${casaAtual.nome}* está pronta — pode vir até a recepção. 🍻`);
+  if(saiuDaEspera) notificarPosicoes();
   loadFila();
 }
 function openFila(){
-  document.getElementById('q_ambiente').innerHTML='<option value="">—</option>'+ambientes.map(a=>`<option value="${a.id}">${esc(a.nome)}</option>`).join('');
+  document.getElementById('q_ambiente').innerHTML='<option value="">—</option>'+ambDedup().map(a=>`<option value="${a.id}">${esc(a.nome)}</option>`).join('');
   ['q_nome','q_tel','q_comanda','q_info'].forEach(i=>document.getElementById(i).value='');
   document.getElementById('q_qtd').value='2'; document.getElementById('q_prio').checked=false; setText('filaErr','');
   show2('filaOverlay',true);
@@ -1182,9 +1208,13 @@ async function saveFila(){
   const reg={casa_id:casaAtual.id, nome, telefone:tel, qtd_pessoas:parseInt(val('q_qtd')||'1',10),
     comanda:val('q_comanda')||null, ambiente_id:val('q_ambiente')||null, informacoes:val('q_info')||null,
     prioridade:document.getElementById('q_prio').checked, status:'aguardando', data:dataSel};
-  const {error}=await sb.from('fila_espera').insert(reg);
-  if(error){ setText('filaErr','Erro: '+error.message); return; }
+  const ins=await sb.from('fila_espera').insert(reg).select('id').single();
+  if(ins.error){ setText('filaErr','Erro: '+ins.error.message); return; }
   closeFila(); loadFila();
+  // avisa a posição no WhatsApp na hora que entra na fila
+  const arr=await filaAguardando();
+  const pos=arr.findIndex(x=>x.id===ins.data.id)+1;
+  if(pos>0) wppSend(tel,`Olá, ${nome}! 👋 Você entrou na *fila de espera do ${casaAtual.nome}*: você é o *${pos}º* da fila (${reg.qtd_pessoas} pessoas). Avisamos por aqui quando a sua mesa estiver pronta! 🍻`);
 }
 
 // ===================== Setup / Util =====================

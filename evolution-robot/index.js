@@ -230,7 +230,7 @@ async function runAgent(casa, from, history) {
 `Você é o atendente de reservas do ${casa.nome}, no WhatsApp. Fale em português do Brasil CORDIAL, EDUCADO e PROFISSIONAL. EVITE gírias. Poucos emojis. Vá direto ajudando. Peça: nome, quantas pessoas, data e horário.
 Hoje é ${hoje} (ISO: ${hojeISO}). Resolva datas relativas a partir de hoje. Escreva datas dd/mm ao cliente, nunca AAAA-MM-DD. Não repita perguntas já respondidas.
 SETORES (min a max por reserva):
-${ambientes.map((a) => `- ${a.nome}: ${a.capacidade_min_reserva} a ${a.capacidade_max_reserva ?? a.limite_pessoas}`).join('\n')}
+${(() => { const seen = {}; const rows = []; for (const a of ambientes) { const max = a.capacidade_max_reserva ?? a.limite_pessoas; if (seen[a.nome]) { seen[a.nome].min = Math.min(seen[a.nome].min, a.capacidade_min_reserva); seen[a.nome].max = Math.max(seen[a.nome].max, max) } else { seen[a.nome] = { min: a.capacidade_min_reserva, max }; rows.push(a.nome) } } return rows.map((n) => `- ${n}: ${seen[n].min} a ${seen[n].max}`).join('\n') })()}
 AGENDA SEMANAL de reservas (janela de chegada por dia — use pra responder "que dias/horários vocês têm reserva?"):
 ${agenda}
 DIA FECHADO: se pedirem um dia marcado como fechado, diga os dias e horários REAIS da agenda acima — PROIBIDO inventar (ex.: nunca diga "só de sexta a domingo" se a agenda mostra outra coisa). Eventos especiais podem abrir dia extra — na dúvida, consultar_disponibilidade.
