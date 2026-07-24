@@ -536,12 +536,29 @@ app.post('/painel/chats', async (req, res) => {
   const c = (await sb.from('casas').select('id,slug').eq('id', casa_id).maybeSingle()).data
   if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
   const r = await evoPost(`/chat/findChats/${instDaCasa(c.slug)}`, {})
-  const chats = (Array.isArray(r) ? r : []).filter((x) => String(x.remoteJid || '').endsWith('@s.whatsapp.net'))
-  res.json({ ok: true, chats: chats.map((x) => ({
-    numero: String(x.remoteJid).split('@')[0], nome: x.pushName || null, foto: x.profilePicUrl || null,
-    atualizado: x.updatedAt || null, nao_lidas: x.unreadCount || 0,
-    ultima: resumoMsg(x.lastMessage?.message, x.lastMessage?.messageType), ultima_minha: !!x.lastMessage?.key?.fromMe,
-  })) })
+  // WhatsApp novo divide a conversa em DUAS metades: enviadas ficam no chat <numero>@s.whatsapp.net e
+  // recebidas num chat <lid>@lid (bug "só aparecem as minhas mensagens" — Giovana 24/07). O remoteJidAlt
+  // da última mensagem do chat @lid aponta o número real → aqui a gente FUNDE as duas metades.
+  const porNum = {}
+  for (const x of (Array.isArray(r) ? r : [])) {
+    const jid = String(x.remoteJid || '')
+    let pn = null
+    if (jid.endsWith('@s.whatsapp.net')) pn = jid
+    else if (jid.endsWith('@lid')) pn = x.lastMessage?.key?.remoteJidAlt || null
+    if (!pn || !String(pn).endsWith('@s.whatsapp.net')) continue
+    const numero = String(pn).split('@')[0]
+    const info = { nome: x.pushName || null, foto: x.profilePicUrl || null, atualizado: x.updatedAt || null,
+      nao_lidas: x.unreadCount || 0, ultima: resumoMsg(x.lastMessage?.message, x.lastMessage?.messageType), ultima_minha: !!x.lastMessage?.key?.fromMe }
+    const ex = porNum[numero]
+    if (!ex) porNum[numero] = { numero, ...info }
+    else {
+      ex.nome = ex.nome || info.nome; ex.foto = ex.foto || info.foto
+      ex.nao_lidas = (ex.nao_lidas || 0) + (info.nao_lidas || 0)
+      if (String(info.atualizado || '') > String(ex.atualizado || '')) { ex.atualizado = info.atualizado; ex.ultima = info.ultima; ex.ultima_minha = info.ultima_minha }
+    }
+  }
+  const chats = Object.values(porNum).sort((a, b) => String(b.atualizado || '').localeCompare(String(a.atualizado || '')))
+  res.json({ ok: true, chats })
 })
 app.post('/painel/msgs', async (req, res) => {
   const u = await exigeLogin(req, res); if (!u) return
@@ -550,9 +567,18 @@ app.post('/painel/msgs', async (req, res) => {
   if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
   const c = (await sb.from('casas').select('id,slug').eq('id', casa_id).maybeSingle()).data
   if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
-  const r = await evoPost(`/chat/findMessages/${instDaCasa(c.slug)}`, { where: { key: { remoteJid: `${String(numero).replace(/\D/g, '')}@s.whatsapp.net` } }, limit: Math.min(Number(limit) || 100, 300) })
-  const recs = r?.messages?.records ?? []
-  const msgs = recs.map((m) => ({ minha: !!m.key?.fromMe, t: Number(m.messageTimestamp) * 1000, texto: resumoMsg(m.message, m.messageType) || '[mensagem]' }))
+  // busca as DUAS metades da conversa: remoteJid = numero (enviadas) + remoteJidAlt = numero (chat @lid, recebidas)
+  const pnJid = `${String(numero).replace(/\D/g, '')}@s.whatsapp.net`
+  const lim = Math.min(Number(limit) || 100, 300)
+  const inst = instDaCasa(c.slug)
+  const [r1, r2] = await Promise.all([
+    evoPost(`/chat/findMessages/${inst}`, { where: { key: { remoteJid: pnJid } }, limit: lim }),
+    evoPost(`/chat/findMessages/${inst}`, { where: { key: { remoteJidAlt: pnJid } }, limit: lim }),
+  ])
+  const recs = [...(r1?.messages?.records ?? []), ...(r2?.messages?.records ?? [])]
+  const vistos = new Set()
+  const msgs = recs.filter((m) => { const id = m.key?.id; if (id && vistos.has(id)) return false; if (id) vistos.add(id); return true })
+    .map((m) => ({ minha: !!m.key?.fromMe, t: Number(m.messageTimestamp) * 1000, texto: resumoMsg(m.message, m.messageType) || '[mensagem]' }))
     .sort((a, b) => a.t - b.t)
   res.json({ ok: true, msgs })
 })
