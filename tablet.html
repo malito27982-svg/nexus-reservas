@@ -945,17 +945,17 @@ function renderPassantes(){
   el.innerHTML=Object.keys(grupos).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})).map(c=>{
     const g=grupos[c];
     return `<div class="rcard"><div class="top"><span class="nome">🪑 Comanda/Mesa ${esc(c)}</span><span class="hora">${g.length} pessoa(s)</span></div>
-      <div class="meta">${g.map(p=>`👤 ${esc(p.nome)}${p.data_nascimento?' · 🎂 '+String(p.data_nascimento).split('-').reverse().join('/'):''} <button class="del" style="min-width:auto;padding:1px 8px;font-size:12px;" onclick="delPassante('${p.id}')">✕</button>`).join('<br>')}</div></div>`;
+      <div class="meta">${g.map(p=>`👤 ${esc(p.nome)}${p.telefone?' · 📱 '+esc(fmtTel(p.telefone)):''}${p.data_nascimento?' · 🎂 '+String(p.data_nascimento).split('-').reverse().join('/'):''} <button class="del" style="min-width:auto;padding:1px 8px;font-size:12px;" onclick="delPassante('${p.id}')">✕</button>`).join('<br>')}</div></div>`;
   }).join('');
 }
 async function delPassante(id){ if(!confirm('Remover esta pessoa do registro?'))return; await sb.from('passantes').delete().eq('id',id); loadReservas(); }
-function addPassRow(){ const d=document.createElement('div'); d.className='row2 passrow'; d.innerHTML='<div class="field"><label>Nome completo *</label><input class="p_nome"></div><div class="field"><label>Nascimento</label><input class="p_nasc" type="date"></div>'; document.getElementById('passRows').appendChild(d); }
+function addPassRow(){ const d=document.createElement('div'); d.className='row2 passrow'; d.innerHTML='<div class="field"><label>Nome completo *</label><input class="p_nome"></div><div class="field"><label>WhatsApp</label><input class="p_tel" placeholder="(11) 90000-0000"></div><div class="field"><label>Nascimento</label><input class="p_nasc" type="date"></div>'; document.getElementById('passRows').appendChild(d); }
 function openPass(){ document.getElementById('p_comanda').value=''; document.getElementById('passRows').innerHTML=''; addPassRow(); setText('passErr',''); show2('passOverlay',true); }
 async function savePass(){
   const comanda=val('p_comanda').trim(); if(!comanda){ setText('passErr','Informe o nº da comanda ou mesa.'); return; }
-  const rows=[...document.querySelectorAll('#passRows .passrow')].map(r=>({nome:r.querySelector('.p_nome').value.trim(),nasc:r.querySelector('.p_nasc').value||null})).filter(r=>r.nome);
+  const rows=[...document.querySelectorAll('#passRows .passrow')].map(r=>({nome:r.querySelector('.p_nome').value.trim(),tel:normTel(r.querySelector('.p_tel').value),nasc:r.querySelector('.p_nasc').value||null})).filter(r=>r.nome);
   if(!rows.length){ setText('passErr','Coloque ao menos um nome.'); return; }
-  const {error}=await sb.from('passantes').insert(rows.map(r=>({casa_id:casaAtual.id,data:dataSel,comanda,nome:r.nome,data_nascimento:r.nasc})));
+  const {error}=await sb.from('passantes').insert(rows.map(r=>({casa_id:casaAtual.id,data:dataSel,comanda,nome:r.nome,telefone:r.tel,data_nascimento:r.nasc})));
   if(error){ setText('passErr','Erro: '+error.message); return; }
   show2('passOverlay',false); tabAtual='passante'; loadReservas();
 }
