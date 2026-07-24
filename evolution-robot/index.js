@@ -182,6 +182,9 @@ async function criarReserva(casa, from, input) {
     await avisarGerente(casa, from, `quer reservar para ${pessoas} pessoas (GRUPO GRANDE +49)`)
     return { ok: false, grupo_grande: true, mensagem: 'Handoff grupo grande. NÃO confirme.' }
   }
+  // anti-duplicata (link duplo visto 24/07): mesma pessoa + mesma data com reserva ativa = NÃO cria outra
+  const dup = (await sb.from('reservas').select('id,token,hora,qtd_pessoas').eq('casa_id', casa.id).eq('telefone', from).eq('data', data).in('status', ['pendente', 'confirmada']).limit(1).maybeSingle()).data
+  if (dup) return { ok: true, ja_existia: true, reserva_token: dup.token, mensagem: `Este cliente JÁ TEM reserva ativa em ${data}${dup.hora ? ' às ' + String(dup.hora).slice(0, 5) : ''} (${dup.qtd_pessoas}p). NÃO foi criada outra — diga que a reserva já está garantida e NÃO reenvie link. Se ele quiser MUDAR algo, oriente responder "atendente".` }
   // setor pode ter 2 linhas (capacidade por dia, ex. "Salao Central" semana/fds) — escolhe a linha do dia da reserva
   const dowR = new Date(data + 'T12:00:00Z').getUTCDay()
   let cands = (await sb.from('ambientes').select('id,nome,dias_semana').eq('casa_id', casa.id).eq('ativo', true).ilike('nome', setor)).data ?? []
@@ -517,6 +520,43 @@ app.post('/painel/qr', async (req, res) => {
   res.json({ ok: true, conectado: false, qr: b64, pairingCode: conn?.pairingCode || null })
 })
 
+// ---- Conversas estilo WhatsApp Web (QA Giovana 24/07): lista TODOS os chats do número direto da Evolution ----
+function resumoMsg(m = {}, tipo) {
+  const t = extrairTexto(m)
+  if (t) return t
+  const mapa = { imageMessage: '📷 Foto', audioMessage: '🎤 Áudio', videoMessage: '🎥 Vídeo', documentMessage: '📄 Documento', stickerMessage: '💟 Figurinha', locationMessage: '📍 Localização', contactMessage: '👤 Contato' }
+  for (const k of Object.keys(mapa)) if (m[k] || tipo === k) return mapa[k]
+  return ''
+}
+app.post('/painel/chats', async (req, res) => {
+  const u = await exigeLogin(req, res); if (!u) return
+  const { casa_id } = req.body || {}
+  if (!casa_id) return res.status(400).json({ ok: false, erro: 'casa_id é obrigatório.' })
+  if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
+  const c = (await sb.from('casas').select('id,slug').eq('id', casa_id).maybeSingle()).data
+  if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
+  const r = await evoPost(`/chat/findChats/${instDaCasa(c.slug)}`, {})
+  const chats = (Array.isArray(r) ? r : []).filter((x) => String(x.remoteJid || '').endsWith('@s.whatsapp.net'))
+  res.json({ ok: true, chats: chats.map((x) => ({
+    numero: String(x.remoteJid).split('@')[0], nome: x.pushName || null, foto: x.profilePicUrl || null,
+    atualizado: x.updatedAt || null, nao_lidas: x.unreadCount || 0,
+    ultima: resumoMsg(x.lastMessage?.message, x.lastMessage?.messageType), ultima_minha: !!x.lastMessage?.key?.fromMe,
+  })) })
+})
+app.post('/painel/msgs', async (req, res) => {
+  const u = await exigeLogin(req, res); if (!u) return
+  const { casa_id, numero, limit } = req.body || {}
+  if (!casa_id || !numero) return res.status(400).json({ ok: false, erro: 'casa_id e numero são obrigatórios.' })
+  if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
+  const c = (await sb.from('casas').select('id,slug').eq('id', casa_id).maybeSingle()).data
+  if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
+  const r = await evoPost(`/chat/findMessages/${instDaCasa(c.slug)}`, { where: { key: { remoteJid: `${String(numero).replace(/\D/g, '')}@s.whatsapp.net` } }, limit: Math.min(Number(limit) || 100, 300) })
+  const recs = r?.messages?.records ?? []
+  const msgs = recs.map((m) => ({ minha: !!m.key?.fromMe, t: Number(m.messageTimestamp) * 1000, texto: resumoMsg(m.message, m.messageType) || '[mensagem]' }))
+    .sort((a, b) => a.t - b.t)
+  res.json({ ok: true, msgs })
+})
+
 // resposta humana do painel (aba Conversas / envio de pesquisa)
 app.post('/painel/send', async (req, res) => {
   const u = await exigeLogin(req, res); if (!u) return
@@ -727,7 +767,7 @@ async function processarMensagem(body) {
     if (!texto.trim()) { await sendText(from, 'Por enquanto eu entendo texto e fotos 🙂'); return }
 
     // saudação isolada SEMPRE reseta pro menu — roda ANTES de qualquer fluxo pendente (flyer/delivery/velho histórico)
-    if (/^(menu|voltar|in[ií]cio|inicio|come[çc]ar|recome[çc]ar|oi+|ol[aá]|bom dia|boa tarde|boa noite|opa|eae|e a[ií])\s*[!.?]*$/i.test(texto.trim())) {
+    if (/^(menu|voltar|in[ií]cio|inicio|come[çc]ar|recome[çc]ar|oi+e*|oie+|ol[aá]|bom dia|boa tarde|boa noite|opa|eae|e a[ií])\s*[!.?]*$/i.test(texto.trim())) {
       await upConversa(casa.id, from, { modo: null, aguardando: 'menu', historico: [], saudou: true, flyer_etapa: null, flyer_feedback: false, flyer_count: 0, flyer_ocasiao: null })
       await sendText(from, MENU_TXT(casa.nome)); return
     }
@@ -771,6 +811,13 @@ async function processarMensagem(body) {
         await sendText(from, 'Obrigado por contar 🙏 Esperamos te ver em breve no Botequim! 🍻'); return
       }
       // cliente respondeu "reservas" = quer remarcar — segue pro fluxo normal
+    }
+
+    // ---- ESCAPE do flyer: no meio do fluxo do flyer a pessoa pediu OUTRA coisa (reserva, cardápio, dúvida...) —
+    // sai do flyer e atende o pedido em vez de repetir "Responda minha foto..." em loop (QA Giovana 24/07)
+    if ((conv.flyer_etapa || conv.flyer_feedback) && /reserva|card[aá]pio|\bmenu\b|delivery|hor[aá]rio|endere[çc]o|d[uú]vida|cancelar|reclama/i.test(texto) && !/n[ãa]o quero|s[óo] o bar|s[óo] a arte|minha foto|selfie|com foto/i.test(texto)) {
+      await upConversa(casa.id, from, { flyer_etapa: null, flyer_feedback: false })
+      conv.flyer_etapa = null; conv.flyer_feedback = false
     }
 
     // ---- fluxo do flyer (texto) ----

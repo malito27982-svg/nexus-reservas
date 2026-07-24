@@ -133,6 +133,7 @@
       <button class="icnbtn" id="btnFut" onclick="toggleFuturas()" title="Todas as próximas reservas">📅 Próximas</button>
       <button class="icnbtn" onclick="location.href='eventos.html'" title="Eventos">🎉 Eventos</button>
       <button class="icnbtn" onclick="setModo('config')" title="Configurações">⚙</button>
+      <button class="icnbtn" onclick="if(confirm('Sair da conta atual?'))doLogout()" title="Sair / trocar de conta">⏻</button>
     </div>
   </header>
 
@@ -606,35 +607,44 @@ function conectou(numero){
 function fecharQr(){ if(qrPoll){clearInterval(qrPoll);qrPoll=null;} document.getElementById('qrOverlay').classList.add('hidden'); }
 let convFiltro='todas', convAtual=null, convPoll=null, atendPoll=null;
 
+// Estilo WhatsApp Web (pedido Giovana 24/07): a lista vem da EVOLUTION (todas as conversas do celular,
+// antigas ou não), não só do que passou pelo robô. Se o robô estiver fora do ar, cai na lista antiga.
+function fmtTel(n){ const s=String(n||''); if(s.startsWith('55')&&s.length>=12){ return '('+s.slice(2,4)+') '+s.slice(4,s.length-4)+'-'+s.slice(-4); } return s; }
+function avatarIni(nome){ const i=esc((nome||'?').trim().charAt(0).toUpperCase()); return `<span style="width:46px;height:46px;border-radius:50%;background:#0a7a55;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;flex-shrink:0;">${i}</span>`; }
 async function loadConversas(){
   if(!casaAtual) return;
-  const {data,error}=await sb.from('conversas').select('telefone,historico,handoff,handoff_aguardando,aguardando,updated_at,nome').eq('casa_id',casaAtual.id).order('updated_at',{ascending:false}).limit(100);
   const inbox=document.getElementById('convInbox');
-  if(error){ inbox.innerHTML='<div style="padding:20px;color:var(--muted)">Erro: '+esc(error.message)+'</div>'; return; }
-  let lista=(data||[]).filter(c=>Array.isArray(c.historico)&&c.historico.length);
-  const total=lista.length, aguard=lista.filter(c=>c.handoff_aguardando).length, humano=lista.filter(c=>c.handoff&&!c.handoff_aguardando).length;
-  // nomes do CRM
+  let chats=null;
+  try{ const r=await robo('POST','/painel/chats',{casa_id:casaAtual.id}); if(r&&r.ok) chats=r.chats; }catch(e){}
+  const {data:convs}=await sb.from('conversas').select('telefone,handoff,handoff_aguardando,updated_at,nome,historico').eq('casa_id',casaAtual.id).limit(300);
+  const st={}; (convs||[]).forEach(c=>st[c.telefone]=c);
+  if(!chats){ // fallback: robô fora do ar — mostra só o que passou pelo robô
+    chats=(convs||[]).filter(c=>Array.isArray(c.historico)&&c.historico.length).map(c=>{ const l=c.historico[c.historico.length-1]||{}; return {numero:c.telefone,nome:c.nome,foto:null,atualizado:c.updated_at,nao_lidas:0,ultima:(l.content||''),ultima_minha:l.role!=='user'}; });
+  }
   let nomes={};
-  const tels=lista.map(c=>c.telefone);
-  if(tels.length){ const {data:cl}=await sb.from('clientes').select('telefone,nome').eq('casa_id',casaAtual.id).in('telefone',tels); (cl||[]).forEach(x=>nomes[x.telefone]=x.nome); }
-  if(convFiltro==='aguardando') lista=lista.filter(c=>c.handoff_aguardando);
-  if(convFiltro==='humano') lista=lista.filter(c=>c.handoff&&!c.handoff_aguardando);
-  // fila estilo WhatsApp: quem AGUARDA atendente primeiro, depois em atendimento humano, depois robô
-  lista.sort((a,b)=>(b.handoff_aguardando?2:b.handoff?1:0)-(a.handoff_aguardando?2:a.handoff?1:0));
+  const tels=chats.map(c=>c.numero);
+  for(let i=0;i<tels.length;i+=150){ const {data:cl}=await sb.from('clientes').select('telefone,nome').eq('casa_id',casaAtual.id).in('telefone',tels.slice(i,i+150)); (cl||[]).forEach(x=>nomes[x.telefone]=x.nome); }
+  const total=chats.length, aguard=(convs||[]).filter(c=>c.handoff_aguardando).length, humano=(convs||[]).filter(c=>c.handoff&&!c.handoff_aguardando).length;
+  let lista=chats;
+  if(convFiltro==='aguardando') lista=lista.filter(c=>(st[c.numero]||{}).handoff_aguardando);
+  if(convFiltro==='humano') lista=lista.filter(c=>{ const s=st[c.numero]||{}; return s.handoff&&!s.handoff_aguardando; });
+  lista.sort((a,b)=>{ const sa=st[a.numero]||{}, sb2=st[b.numero]||{}; const pa=sa.handoff_aguardando?2:sa.handoff?1:0, pb=sb2.handoff_aguardando?2:sb2.handoff?1:0; if(pb!==pa) return pb-pa; return new Date(b.atualizado||0)-new Date(a.atualizado||0); });
   document.getElementById('convFiltros').innerHTML=
     `<button class="${convFiltro==='todas'?'on':''}" onclick="setConvFiltro('todas')">Todas ${total}</button>`+
     `<button class="${convFiltro==='aguardando'?'on':''}" onclick="setConvFiltro('aguardando')" ${aguard?'style="background:#e11d48;color:#fff;"':''}>🔔 Aguardando ${aguard}</button>`+
     `<button class="${convFiltro==='humano'?'on':''}" onclick="setConvFiltro('humano')">🙋 Em atendimento ${humano}</button>`;
   inbox.innerHTML = lista.length? lista.map(c=>{
-    const last=c.historico[c.historico.length-1]||{};
-    const quem=last.role==='user'?'':(last.humano?'Você: ':'🤖 ');
-    const prev=esc((quem+(last.content||'')).slice(0,90));
-    const badge=c.handoff_aguardando?'<span style="background:#e11d48;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🔔 Aguardando atendente</span>':c.handoff?'<span style="background:#7c3aed;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🙋 Humano</span>':'<span style="background:#0a7a55;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🤖 IA ativa</span>';
-    const nome=nomes[c.telefone]||c.nome||c.telefone;
-    return `<div class="card" style="cursor:pointer;${c.handoff_aguardando?'border:2px solid #e11d48;':''}" onclick="openAtend('${c.telefone}')">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><b>${esc(nome)}</b>${badge}</div>
-      <div style="color:var(--muted);font-size:14px;margin-top:4px;">${prev}</div>
-      <div style="color:var(--muted);font-size:12px;margin-top:2px;">${fmtHora(c.updated_at)} · ${c.telefone}</div>
+    const s=st[c.numero]||{};
+    const badge=s.handoff_aguardando?'<span style="background:#e11d48;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🔔 Aguardando</span>':s.handoff?'<span style="background:#7c3aed;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">🙋 Humano</span>':'';
+    const nome=nomes[c.numero]||c.nome||s.nome||fmtTel(c.numero);
+    const foto=c.foto?`<img src="${esc(c.foto)}" style="width:46px;height:46px;border-radius:50%;object-fit:cover;flex-shrink:0;background:#0a7a55;" alt="">`:avatarIni(nome);
+    const naoLidas=c.nao_lidas?`<span style="background:#25d366;color:#000;font-weight:700;border-radius:50%;min-width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;padding:0 5px;">${c.nao_lidas}</span>`:'';
+    return `<div onclick="openAtend('${c.numero}')" style="cursor:pointer;display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);${s.handoff_aguardando?'background:rgba(225,29,72,.10);':''}">
+      ${foto}
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;justify-content:space-between;gap:8px;"><b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(nome)}</b><span style="color:var(--muted);font-size:12px;flex-shrink:0;">${fmtHora(c.atualizado)}</span></div>
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><span style="color:var(--muted);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.ultima_minha?'✓ ':''}${esc((c.ultima||'').slice(0,80))}</span><span style="display:flex;gap:6px;flex-shrink:0;">${naoLidas}${badge}</span></div>
+      </div>
     </div>`;
   }).join(''):'<div style="padding:24px;color:var(--muted)">Nenhuma conversa ainda.</div>';
 }
@@ -741,43 +751,66 @@ async function loadExps(){
 async function delExp(id){ if(!confirm('Remover esta experiência?'))return; await sb.from('experiencias').update({ativo:false}).eq('id',id); loadExps(); }
 function fmtHora(ts){ if(!ts) return ''; const d=new Date(ts); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 
+let atMsgs=null;
 async function openAtend(telefone){
   const {data}=await sb.from('conversas').select('*').eq('casa_id',casaAtual.id).eq('telefone',telefone).maybeSingle();
-  convAtual=data; if(!convAtual) return;
+  convAtual=data||{telefone,handoff:false,handoff_aguardando:false,historico:[]};
+  atMsgs=null;
   document.getElementById('atendOverlay').classList.remove('hidden');
   renderAtend();
+  refreshAtend();
   if(atendPoll) clearInterval(atendPoll);
   atendPoll=setInterval(refreshAtend,4000);
 }
 function renderAtend(){
   const c=convAtual, h=c.handoff;
-  document.getElementById('atTitle').textContent=c.telefone;
+  document.getElementById('atTitle').textContent=fmtTel(c.telefone);
   document.getElementById('atStatus').textContent=h?'🙋 Você assumiu — o robô está pausado nesta conversa':'🤖 Robô atendendo automaticamente';
   document.getElementById('atAssumir').classList.toggle('hidden',h);
   document.getElementById('atDevolver').classList.toggle('hidden',!h);
   const inp=document.getElementById('atInput'); inp.disabled=!h; document.getElementById('atSend').disabled=!h;
   inp.placeholder=h?'Escreva sua resposta…':'Assuma o atendimento para responder…';
   const thread=document.getElementById('atThread');
-  const hist=Array.isArray(c.historico)?c.historico:[];
-  thread.innerHTML=hist.map(m=>{
-    const eu=m.role!=='user';
-    const bg=m.role==='user'?'var(--card2)':(m.humano?'#7c3aed':'#075e54');
-    const al=eu?'flex-end':'flex-start';
-    const tag=m.role==='user'?'Cliente':(m.humano?'Você':'Robô');
-    return `<div style="align-self:${al};max-width:78%;background:${bg};color:#fff;padding:8px 12px;border-radius:12px;">
-      <div style="font-size:11px;opacity:.7;margin-bottom:2px;">${tag}</div>${esc(m.content||'')}</div>`;
-  }).join('');
-  thread.scrollTop=thread.scrollHeight;
+  const nearBottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<90||!thread.innerHTML;
+  if(Array.isArray(atMsgs)){
+    // conversa COMPLETA do celular (Evolution) — estilo WhatsApp: minhas à direita, cliente à esquerda
+    let lastDia='', html='';
+    atMsgs.forEach(m=>{
+      const d=new Date(m.t);
+      const dia=String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
+      if(dia!==lastDia){ html+=`<div style="align-self:center;background:var(--card2);color:var(--muted);font-size:12px;padding:3px 12px;border-radius:10px;">${dia}</div>`; lastDia=dia; }
+      const hh=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+      html+=`<div style="align-self:${m.minha?'flex-end':'flex-start'};max-width:78%;background:${m.minha?'#075e54':'var(--card2)'};color:${m.minha?'#fff':'var(--txt)'};padding:8px 12px;border-radius:12px;white-space:pre-wrap;word-break:break-word;">${esc(m.texto||'')}<div style="font-size:10px;opacity:.6;text-align:right;margin-top:2px;">${hh}</div></div>`;
+    });
+    thread.innerHTML=html||'<div style="color:var(--muted);align-self:center;padding:20px;">Sem mensagens.</div>';
+  } else {
+    // fallback (robô fora do ar): histórico gravado pelo robô
+    const hist=Array.isArray(c.historico)?c.historico:[];
+    thread.innerHTML=hist.map(m=>{
+      const eu=m.role!=='user';
+      const bg=m.role==='user'?'var(--card2)':(m.humano?'#7c3aed':'#075e54');
+      const tag=m.role==='user'?'Cliente':(m.humano?'Você':'Robô');
+      return `<div style="align-self:${eu?'flex-end':'flex-start'};max-width:78%;background:${bg};color:#fff;padding:8px 12px;border-radius:12px;">
+        <div style="font-size:11px;opacity:.7;margin-bottom:2px;">${tag}</div>${esc(m.content||'')}</div>`;
+    }).join('')||'<div style="color:var(--muted);align-self:center;padding:20px;">Carregando mensagens…</div>';
+  }
+  if(nearBottom) thread.scrollTop=thread.scrollHeight;
 }
 async function refreshAtend(){
   if(!convAtual) return;
-  const {data}=await sb.from('conversas').select('*').eq('casa_id',casaAtual.id).eq('telefone',convAtual.telefone).maybeSingle();
-  if(data){ convAtual=data; renderAtend(); }
+  const tel=convAtual.telefone;
+  let msgsR=null;
+  try{ msgsR=await robo('POST','/painel/msgs',{casa_id:casaAtual.id,numero:tel,limit:150}); }catch(e){}
+  const {data}=await sb.from('conversas').select('*').eq('casa_id',casaAtual.id).eq('telefone',tel).maybeSingle();
+  if(!convAtual||convAtual.telefone!==tel) return; // fechou/trocou de conversa no meio
+  if(data) convAtual=data;
+  if(msgsR&&msgsR.ok) atMsgs=msgsR.msgs;
+  renderAtend();
 }
 function closeAtend(){ document.getElementById('atendOverlay').classList.add('hidden'); if(atendPoll){clearInterval(atendPoll);atendPoll=null;} convAtual=null; loadConversas(); }
 async function painel(op,extra){
   const tel=convAtual.telefone;
-  if(op==='painel_assumir'){ const {error}=await sb.from('conversas').update({handoff:true,handoff_aguardando:false}).eq('casa_id',casaAtual.id).eq('telefone',tel); vigiaAtendimento(); return {ok:!error,erro:error&&error.message}; }
+  if(op==='painel_assumir'){ const {error}=await sb.from('conversas').upsert({casa_id:casaAtual.id,telefone:tel,handoff:true,handoff_aguardando:false},{onConflict:'casa_id,telefone'}); vigiaAtendimento(); return {ok:!error,erro:error&&error.message}; }
   if(op==='painel_devolver'){
     // devolve via robô: ele confere se a reserva combinada no atendimento humano subiu no sistema (e cria se faltou)
     const { data:{ session } }=await sb.auth.getSession();
