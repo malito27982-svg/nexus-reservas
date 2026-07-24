@@ -521,7 +521,8 @@ app.post('/painel/qr', async (req, res) => {
 })
 
 // ---- Conversas estilo WhatsApp Web (QA Giovana 24/07): lista TODOS os chats do número direto da Evolution ----
-function resumoMsg(m = {}, tipo) {
+function resumoMsg(m, tipo) {
+  m = m || {} // lastMessage.message pode vir null (default de parâmetro NÃO pega null) — crash-loop visto 24/07
   const t = extrairTexto(m)
   if (t) return t
   const mapa = { imageMessage: '📷 Foto', audioMessage: '🎤 Áudio', videoMessage: '🎥 Vídeo', documentMessage: '📄 Documento', stickerMessage: '💟 Figurinha', locationMessage: '📍 Localização', contactMessage: '👤 Contato' }
@@ -743,7 +744,7 @@ app.get('/debug/lembretes', async (req, res) => {
 })
 
 // ===================== WEBHOOK =====================
-function extrairTexto(m = {}) { return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '' }
+function extrairTexto(m) { m = m || {}; return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '' }
 
 // dedup: a Evolution pode reentregar o MESMO messages.upsert (retry/append) e o robô respondia 2x (QA Giovana 24/07)
 const _seenMsg = new Map()
@@ -976,5 +977,9 @@ async function processarMensagem(body) {
     await upConversa(casa.id, from, { historico: history })
   }
 }
+
+// rede de segurança: erro não tratado NUNCA derruba o robô (crash-loop da aba Conversas, 24/07)
+process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e?.message || e))
+process.on('uncaughtException', (e) => console.error('uncaughtException:', e?.message || e))
 
 app.listen(PORT, () => console.log(`Robo Botequim ouvindo na porta ${PORT} | multi-instância | fallback ${INSTANCE}`))
