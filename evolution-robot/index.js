@@ -693,6 +693,16 @@ async function sweepLembretes() {
         }
       }
     }
+    // pesquisa de experiência 3h após CONCLUIR a mesa no painel (pedido Lucas 24/07)
+    const tresH = new Date(agora - 3 * 3600000).toISOString()
+    const corte48 = new Date(agora - 48 * 3600000).toISOString()
+    const concl = (await sb.from('reservas').select('id,casa_id,nome,telefone,concluido_em').eq('status', 'concluido').is('pesquisa_enviada', null).not('concluido_em', 'is', null).not('telefone', 'is', null).lte('concluido_em', tresH).gte('concluido_em', corte48)).data ?? []
+    for (const r of concl) {
+      const casa = await getCasaPorId(r.casa_id); if (!casa) continue
+      const link = `${LINK_BASE}/pesquisa.html?p=cli-${casa.slug}&r=${encodeURIComponent(r.telefone)}`
+      const ok = await als.run({ inst: instDaCasa(casa.slug) }, () => sendText(r.telefone, `Oi, ${r.nome}! 😊 Como foi sua experiência no *${casa.nome}* hoje? Sua opinião vale MUITO pra gente — leva 1 minuto:\n${link}\n\nObrigado e até a próxima! 🍻`))
+      if (ok) { await sb.from('reservas').update({ pesquisa_enviada: new Date().toISOString() }).eq('id', r.id); acoes.push(`pesq:${r.id}`) }
+    }
     if (acoes.length) console.log('lembretes enviados:', acoes.join(' '))
   } catch (e) { console.error('lembretes exc', e.message) }
   return acoes

@@ -984,17 +984,11 @@ async function setStatus(id,st){
   if(st==='confirmada') patch.confirmada_em=now;
   if(st==='checkin')    patch.checkin_em=now;
   if(st==='cancelado'){ patch.cancelado_em=now; const m=prompt('Motivo do cancelamento (opcional):'); if(m&&m.trim()) patch.motivo_cancelamento=m.trim(); }
+  // pesquisa de experiência NÃO sai mais na hora: o robô manda sozinho 3h após o Concluir (pedido Lucas 24/07)
+  if(st==='concluido') patch.concluido_em=now;
   const {error}=await sb.from('reservas').update(patch).eq('id',id);
   if(error){ alert('Erro: '+error.message); return; }
   loadReservas();
-  if(st==='concluido') enviarPesquisa(id);
-}
-async function enviarPesquisa(id){
-  const r=reservas.find(x=>x.id===id); if(!r||!r.telefone) return;
-  const link='https://reservas.plionai.com.br/pesquisa.html?p=cli-'+casaAtual.slug+'&r='+encodeURIComponent(r.telefone);
-  const texto='Oi '+(r.nome||'')+'! Que bom ter você no '+(casaAtual.nome_curto||casaAtual.nome)+' hoje 🍻 Sua opinião vale muito pra gente — responde rapidinho? '+link;
-  try{ const { data:{ session } }=await sb.auth.getSession();
-    await fetch(ROBOT_URL+'/painel/send',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((session&&session.access_token)||'')},body:JSON.stringify({casa_id:casaAtual.id,telefone:r.telefone,texto})}); }catch(e){}
 }
 
 // ===================== DETALHE DA RESERVA =====================
