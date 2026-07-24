@@ -257,7 +257,6 @@
     </div>
     <div class="field"><label>E-mail</label><input id="f_email"></div>
     <div class="field"><label>Observação</label><textarea id="f_obs" rows="2"></textarea></div>
-    <div class="field"><div class="toggle"><input type="checkbox" id="f_passante"><label style="margin:0;">Reserva passante (cliente chegou sem reserva)</label></div></div>
     <div class="err" id="formErr"></div>
     <div class="foot">
       <button class="b-cancel" onclick="closeForm()">Cancelar</button>
@@ -307,6 +306,22 @@
     <div id="convList"></div>
     <div class="err" id="convErr"></div>
     <div class="foot"><button class="b-cancel" onclick="closeConv()">Fechar</button></div>
+  </div>
+</div>
+
+<!-- ============ MODAL: PASSANTE (grupo já na mesa — NÃO cria reserva) ============ -->
+<div id="passOverlay" class="overlay hidden">
+  <div class="modal" style="max-width:560px;">
+    <h2>🚶 Passante — quem já está na mesa</h2>
+    <p style="color:var(--muted);margin-top:0;">Não cria reserva: só registra as pessoas do grupo (nome completo, comanda ou mesa e nascimento).</p>
+    <div class="field"><label>Nº da comanda ou mesa *</label><input id="p_comanda" placeholder="Ex: 45"></div>
+    <div id="passRows"></div>
+    <button class="b-slate" onclick="addPassRow()">+ adicionar pessoa</button>
+    <div class="err" id="passErr"></div>
+    <div class="foot">
+      <button class="b-cancel" onclick="show2('passOverlay',false)">Cancelar</button>
+      <button class="b-blue" style="color:#fff;" onclick="savePass()">Salvar grupo</button>
+    </div>
   </div>
 </div>
 
@@ -394,7 +409,7 @@
 <script>
 // ===================== Estado =====================
 let sb=null, casas=[], casaAtual=null, ambientes=[], giros=[], dataSel=isoToday();
-let modo='reservas', reservas=[], convCount={}, fila=[], tabAtual='dia', filaTab='aguardando';
+let modo='reservas', reservas=[], convCount={}, fila=[], passantes=[], tabAtual='dia', filaTab='aguardando';
 let convReserva=null, vendoFuturas=false;
 
 const STATUS_TABS=[
@@ -479,13 +494,13 @@ function setModo(m){
   document.getElementById('pesquisasView').classList.toggle('hidden',m!=='pesquisas');
   document.getElementById('configView').classList.toggle('hidden',m!=='config');
   document.getElementById('fab').classList.toggle('hidden',m==='conversas'||m==='calendario'||m==='ia'||m==='pesquisas'||m==='config');
-  document.getElementById('fab').textContent = m==='reservas'?'+ Nova Reserva':'+ Adicionar à fila';
+  document.getElementById('fab').textContent = m==='reservas'?(tabAtual==='passante'?'+ Passante':'+ Nova Reserva'):'+ Adicionar à fila';
   if(convPoll){clearInterval(convPoll);convPoll=null;}
   if(m==='conversas'){ convPoll=setInterval(()=>{ if(document.getElementById('atendOverlay').classList.contains('hidden')) loadConversas(); },6000); }
   if(m==='calendario'){ calAnchor=mesAnchorFromDataSel(); }
   loadData();
 }
-function openCreate(){ modo==='reservas'?openForm():openFila(); }
+function openCreate(){ if(modo!=='reservas') return openFila(); if(tabAtual==='passante') return openPass(); openForm(); }
 function loadData(){ modo==='reservas'?loadReservas():modo==='fila'?loadFila():modo==='calendario'?loadCalendario():modo==='ia'?loadIA():modo==='pesquisas'?loadPesquisas():modo==='config'?loadWpp():loadConversas(); }
 
 // ===================== PESQUISAS (NPS cliente + clima funcionários) =====================
@@ -865,6 +880,8 @@ async function loadReservas(){
   const {data,error}=await q;
   if(error){ alert('Erro ao ler reservas: '+error.message); return; }
   reservas=data||[];
+  passantes=[];
+  if(!vendoFuturas){ const {data:ps}=await sb.from('passantes').select('*').eq('casa_id',casaAtual.id).eq('data',dataSel).order('comanda').order('criado_em'); passantes=ps||[]; }
   await loadConvidados();
   renderTabs(); renderOcc(); renderList(); refreshDet();
 }
@@ -875,12 +892,12 @@ async function loadConvidados(){
 }
 function renderTabs(){
   document.getElementById('tabs').innerHTML=STATUS_TABS.map(t=>{
-    const n=reservas.filter(r=>tabMatch(t,r)).length;
+    const n=t.key==='passante'?passantes.length:reservas.filter(r=>tabMatch(t,r)).length;
     return `<button class="${t.key===tabAtual?'active':''}" onclick="setTab('${t.key}')">${t.label}<span class="badge">${n}</span></button>`;
   }).join('');
 }
 function tabMatch(t,r){ return t.key==='passante' ? (r.passante && r.status!=='cancelado') : t.match.includes(r.status); }
-function setTab(k){ tabAtual=k; renderTabs(); renderList(); }
+function setTab(k){ tabAtual=k; if(modo==='reservas') document.getElementById('fab').textContent = k==='passante'?'+ Passante':'+ Nova Reserva'; renderTabs(); renderList(); }
 function renderOcc(){
   if(vendoFuturas){ document.getElementById('occ').innerHTML=''; return; }
   const ativas=reservas.filter(r=>['pendente','confirmada','checkin','concluido'].includes(r.status));
@@ -901,6 +918,7 @@ function renderTotal(){
 }
 function renderList(){
   renderTotal();
+  if(tabAtual==='passante'){ renderPassantes(); return; }
   const t=STATUS_TABS.find(x=>x.key===tabAtual);
   const arr=reservas.filter(r=>tabMatch(t,r));
   const el=document.getElementById('list');
@@ -916,6 +934,30 @@ function renderList(){
     return;
   }
   el.innerHTML=arr.map(card).join('');
+}
+// Passante (spec Lucas 24/07): NÃO cria reserva — só registra quem já está na mesa
+// (nome completo + comanda/mesa + nascimento), agrupado por comanda, no dia selecionado.
+function renderPassantes(){
+  const el=document.getElementById('list');
+  if(vendoFuturas){ el.innerHTML='<div class="empty">Passantes são registrados por dia — saia do modo "Próximas".</div>'; return; }
+  if(!passantes.length){ el.innerHTML='<div class="empty">Nenhum passante registrado neste dia. Toque em "+ Passante" pra cadastrar o grupo da mesa.</div>'; return; }
+  const grupos={}; passantes.forEach(p=>{ const c=p.comanda||'—'; (grupos[c]=grupos[c]||[]).push(p); });
+  el.innerHTML=Object.keys(grupos).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})).map(c=>{
+    const g=grupos[c];
+    return `<div class="rcard"><div class="top"><span class="nome">🪑 Comanda/Mesa ${esc(c)}</span><span class="hora">${g.length} pessoa(s)</span></div>
+      <div class="meta">${g.map(p=>`👤 ${esc(p.nome)}${p.data_nascimento?' · 🎂 '+String(p.data_nascimento).split('-').reverse().join('/'):''} <button class="del" style="min-width:auto;padding:1px 8px;font-size:12px;" onclick="delPassante('${p.id}')">✕</button>`).join('<br>')}</div></div>`;
+  }).join('');
+}
+async function delPassante(id){ if(!confirm('Remover esta pessoa do registro?'))return; await sb.from('passantes').delete().eq('id',id); loadReservas(); }
+function addPassRow(){ const d=document.createElement('div'); d.className='row2 passrow'; d.innerHTML='<div class="field"><label>Nome completo *</label><input class="p_nome"></div><div class="field"><label>Nascimento</label><input class="p_nasc" type="date"></div>'; document.getElementById('passRows').appendChild(d); }
+function openPass(){ document.getElementById('p_comanda').value=''; document.getElementById('passRows').innerHTML=''; addPassRow(); setText('passErr',''); show2('passOverlay',true); }
+async function savePass(){
+  const comanda=val('p_comanda').trim(); if(!comanda){ setText('passErr','Informe o nº da comanda ou mesa.'); return; }
+  const rows=[...document.querySelectorAll('#passRows .passrow')].map(r=>({nome:r.querySelector('.p_nome').value.trim(),nasc:r.querySelector('.p_nasc').value||null})).filter(r=>r.nome);
+  if(!rows.length){ setText('passErr','Coloque ao menos um nome.'); return; }
+  const {error}=await sb.from('passantes').insert(rows.map(r=>({casa_id:casaAtual.id,data:dataSel,comanda,nome:r.nome,data_nascimento:r.nasc})));
+  if(error){ setText('passErr','Erro: '+error.message); return; }
+  show2('passOverlay',false); tabAtual='passante'; loadReservas();
 }
 function card(r){
   const amb=ambientes.find(a=>a.id===r.ambiente_id);
@@ -1052,7 +1094,7 @@ function openForm(){
   document.getElementById('f_giro').innerHTML='<option value="">—</option>'+giros.map(g=>`<option value="${g.id}">${g.nome||''} ${g.horario_min.slice(0,5)}-${g.horario_max.slice(0,5)}</option>`).join('');
   document.getElementById('f_data').value=dataSel;
   ['f_nome','f_tel','f_hora','f_cpf','f_nasc','f_email','f_obs'].forEach(i=>document.getElementById(i).value='');
-  document.getElementById('f_qtd').value='2'; document.getElementById('f_kids').value='0'; document.getElementById('f_passante').checked=false; setText('formErr','');
+  document.getElementById('f_qtd').value='2'; document.getElementById('f_kids').value='0'; setText('formErr','');
   show2('formOverlay',true);
 }
 function closeForm(){ show2('formOverlay',false); }
@@ -1067,9 +1109,7 @@ async function saveReserva(){
     email:val('f_email')||null, cpf:val('f_cpf')||null, data_nascimento:val('f_nasc')||null,
     data:val('f_data'), hora:val('f_hora')||null, giro_id:val('f_giro')||null, ambiente_id:ambPorDia(amb,val('f_data')),
     qtd_pessoas:qtd, qtd_criancas:parseInt(val('f_kids')||'0',10), confirmacoes_necessarias:qtd, ocasiao:val('f_ocasiao')||null, origem:'painel',
-    observacao:val('f_obs')||null, passante:document.getElementById('f_passante').checked,
-    status:document.getElementById('f_passante').checked?'checkin':'confirmada' };
-  if(reserva.status==='checkin') reserva.checkin_em=new Date().toISOString();
+    observacao:val('f_obs')||null, status:'confirmada' };
   const {error}=await sb.from('reservas').insert(reserva);
   if(error){ setText('formErr','Erro: '+error.message); return; }
   closeForm(); loadReservas();
