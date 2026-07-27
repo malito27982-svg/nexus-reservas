@@ -41,6 +41,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } })
 
 // ===================== ENVIO (Evolution) =====================
+let lastEvoErr = null // último erro da Evolution (status+body) — p/ o sweep saber se é falha DEFINITIVA
 async function evoPost(path, payload) {
   try {
     const r = await fetch(`${EVOLUTION_URL}${path}`, {
@@ -48,10 +49,18 @@ async function evoPost(path, payload) {
       headers: { 'Content-Type': 'application/json', apikey: MASTER_KEY },
       body: JSON.stringify(payload),
     })
-    if (!r.ok) console.error(`  ⚠️ ${path} ${r.status}`, (await r.text()).slice(0, 200))
-    return r.ok ? await r.json().catch(() => ({})) : null
-  } catch (e) { console.error(`  ⚠️ ${path} exc`, e.message); return null }
+    if (!r.ok) {
+      const body = (await r.text().catch(() => '')).slice(0, 200)
+      lastEvoErr = { status: r.status, body }
+      console.error(`  ⚠️ ${path} ${r.status}`, body)
+      return null
+    }
+    lastEvoErr = null
+    return await r.json().catch(() => ({}))
+  } catch (e) { lastEvoErr = { status: 0, body: e.message }; console.error(`  ⚠️ ${path} exc`, e.message); return null }
 }
+// número sem WhatsApp (exists:false) = falha DEFINITIVA — retentar a cada 5min nunca vai funcionar
+function numSemWhatsApp() { return !!(lastEvoErr && lastEvoErr.status === 400 && lastEvoErr.body.includes('"exists":false')) }
 // telefone digitado à mão no painel pode vir "(11) 94544-7227" ou sem o 55 — normaliza ANTES de enviar
 // (send com 11945447227 deu exists:false no log de 24/07)
 function normNum(n) { let d = String(n || '').replace(/\D/g, ''); if (d.length >= 10 && d.length <= 11 && !d.startsWith('55')) d = '55' + d; return d }
@@ -299,7 +308,15 @@ async function claudeLoop(system, tools, history, exec, maxIter = 5) {
       body: JSON.stringify({ model: MODEL, max_tokens: 1024, system, tools, messages }),
     })
     const data = await res.json()
-    if (data.type === 'error') { console.error('anthropic', JSON.stringify(data).slice(0, 300)); return { text: 'Tive um problema aqui, pode repetir? 🙏', followups } }
+    if (data.type === 'error') {
+      console.error('anthropic', JSON.stringify(data).slice(0, 300))
+      const t = data.error?.type || ''
+      // chave inválida/sem permissão/billing = erro PERMANENTE: pedir pra repetir só gera loop —
+      // avisa o cliente UMA vez e passa pro atendente humano (27/07, caso Albert Abate 4x "tive um problema")
+      if (t === 'authentication_error' || t === 'permission_error' || t === 'billing_error')
+        return { text: 'Nosso atendimento automático deu uma pausa aqui 😔 Já chamei um *atendente humano* pra continuar com você — só um instante! 🙏', followups, _handoff: true }
+      return { text: 'Tive um problema aqui, pode repetir? 🙏', followups }
+    }
     if (data.stop_reason === 'tool_use') {
       messages.push({ role: 'assistant', content: data.content })
       const results = []
@@ -714,6 +731,7 @@ async function sweepLembretes() {
       if (horasAte <= 1.05 && !r.lembrete_1h) {
         const ok = await als.run({ inst }, () => sendText(r.telefone, `⏰ Falta pouco, ${r.nome}! Sua mesa no *${casa.nome}* está garantida hoje às *${horaTxt}* (${r.qtd_pessoas} pessoas).${evento} Até já! 🍻`))
         if (ok) { await sb.from('reservas').update({ lembrete_1h: new Date().toISOString() }).eq('id', r.id); acoes.push(`1h:${r.id}`) }
+        else if (numSemWhatsApp()) { await sb.from('reservas').update({ lembrete_1h: new Date().toISOString() }).eq('id', r.id); acoes.push(`1h-semwpp:${r.id}`) }
       } else if (horasAte <= 24 && horasAte > 1.5 && !r.lembrete_24h) {
         // reserva recém-criada não precisa de lembrete (a pessoa acabou de reservar)
         if (r.created_at && agora - new Date(r.created_at).getTime() < 2 * 3600000) continue
@@ -723,7 +741,7 @@ async function sweepLembretes() {
           await getConversa(r.casa_id, r.telefone)
           await sb.from('conversas').update({ aguardando: 'lembrete', lembrete_reserva_id: r.id, updated_at: new Date().toISOString() }).eq('casa_id', r.casa_id).eq('telefone', r.telefone)
           acoes.push(`24h:${r.id}`)
-        }
+        } else if (numSemWhatsApp()) { await sb.from('reservas').update({ lembrete_24h: new Date().toISOString() }).eq('id', r.id); acoes.push(`24h-semwpp:${r.id}`) }
       }
     }
     // pesquisa de experiência 3h após CONCLUIR a mesa no painel (pedido Lucas 24/07)
@@ -735,6 +753,7 @@ async function sweepLembretes() {
       const link = `${LINK_BASE}/pesquisa.html?p=cli-${casa.slug}&r=${encodeURIComponent(r.telefone)}`
       const ok = await als.run({ inst: instDaCasa(casa.slug) }, () => sendText(r.telefone, `Oi, ${r.nome}! 😊 Como foi sua experiência no *${casa.nome}* hoje? Sua opinião vale MUITO pra gente — leva 1 minuto:\n${link}\n\nObrigado e até a próxima! 🍻`))
       if (ok) { await sb.from('reservas').update({ pesquisa_enviada: new Date().toISOString() }).eq('id', r.id); acoes.push(`pesq:${r.id}`) }
+      else if (numSemWhatsApp()) { await sb.from('reservas').update({ pesquisa_enviada: new Date().toISOString() }).eq('id', r.id); acoes.push(`pesq-semwpp:${r.id}`) }
     }
     if (acoes.length) console.log('lembretes enviados:', acoes.join(' '))
   } catch (e) { console.error('lembretes exc', e.message) }
@@ -929,7 +948,9 @@ async function processarMensagem(body) {
       const hist = Array.isArray(conv.historico) ? conv.historico : []; hist.push({ role: 'user', content: texto })
       const reply = await runDeliveryAgent(casa, from, hist)
       if (reply.text) { hist.push({ role: 'assistant', content: reply.text }); await sendText(from, reply.text) }
-      await upConversa(casa.id, from, { historico: hist }); return
+      await upConversa(casa.id, from, { historico: hist })
+      if (reply._handoff) { await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true }); await avisarGerente(casa, from, 'precisa de atendimento (IA do robô fora do ar — chave da Anthropic)') }
+      return
     }
 
     // (pedido de atendente foi movido pro TOPO do fluxo — prioridade sobre flyer/lembrete)
@@ -981,6 +1002,7 @@ async function processarMensagem(body) {
     if (reply.text) { history.push({ role: 'assistant', content: reply.text }); await sendText(from, reply.text) }
     for (const fu of reply.followups ?? []) { await sendText(from, fu); history.push({ role: 'assistant', content: fu }) }
     await upConversa(casa.id, from, { historico: history })
+    if (reply._handoff) { await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true }); await avisarGerente(casa, from, 'precisa de atendimento (IA do robô fora do ar — chave da Anthropic)') }
   }
 }
 
