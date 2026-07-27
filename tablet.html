@@ -3,90 +3,131 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Nexus Reservas — Tablet</title>
+<title>Painel Botequim</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
-    --bg:#0f1115; --card:#1a1d24; --card2:#232732; --line:#2c313c;
-    --txt:#eef1f6; --muted:#9aa3b2; --accent:#3b82f6;
-    --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --purple:#a855f7; --slate:#64748b;
+    --bg:#F7F7FB; --card:#FFFFFF; --card2:#F1F0F7; --line:#E8E7F1;
+    --txt:#232338; --muted:#8B8BA3; --accent:#7C3AED; --accent-soft:#F3EEFD;
+    --green:#16A34A; --amber:#F59E0B; --red:#E11D48; --purple:#7C3AED; --slate:#64748B;
+    --shadow:0 1px 2px rgba(35,35,56,.04), 0 6px 20px rgba(35,35,56,.05);
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0; height:100%;}
-  body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--txt); font-size:17px;}
-  button{font-family:inherit; cursor:pointer; border:none; border-radius:12px; font-size:16px;}
-  input,select,textarea{font-family:inherit; font-size:17px; width:100%; padding:14px; border-radius:12px;
-    border:1px solid var(--line); background:var(--card2); color:var(--txt); outline:none;}
+  body{font-family:'Segoe UI',-apple-system,Roboto,Arial,sans-serif; background:var(--bg); color:var(--txt); font-size:16px;}
+  button{font-family:inherit; cursor:pointer; border:none; border-radius:10px; font-size:15px;}
+  input,select,textarea{font-family:inherit; font-size:16px; width:100%; padding:12px 13px; border-radius:10px;
+    border:1px solid var(--line); background:#fff; color:var(--txt); outline:none;}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(124,58,237,.13);}
   .hidden{display:none !important;}
+  .muted{color:var(--muted);}
 
-  header{display:flex; align-items:center; gap:12px; padding:12px 16px; background:var(--card);
-    border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; flex-wrap:wrap;}
-  header .casa{font-weight:700; font-size:19px;}
-  header select.casaSel{width:auto; min-width:200px; padding:10px 12px;}
-  .modesw{display:flex; gap:4px; background:var(--card2); padding:4px; border-radius:14px;}
-  .modesw button{background:transparent; color:var(--muted); padding:10px 16px; font-weight:700;}
-  .modesw button.on{background:var(--accent); color:#fff;}
-  .datenav{display:flex; align-items:center; gap:6px; margin-left:auto;}
-  .datenav button{background:var(--card2); color:var(--txt); padding:12px 16px; font-size:20px; min-width:52px;}
-  .datenav .today{font-size:15px; padding:12px 14px;}
-  .datelabel{font-weight:700; min-width:185px; text-align:center; font-size:18px;}
-  .icnbtn{background:var(--card2); color:var(--txt); padding:12px 14px;}
+  /* ===== layout: sidebar + conteúdo (estilo Dionísio) ===== */
+  #app{display:flex; min-height:100vh;}
+  .sidebar{width:238px; flex-shrink:0; background:#fff; border-right:1px solid var(--line);
+    display:flex; flex-direction:column; position:sticky; top:0; height:100vh; overflow-y:auto;}
+  .brand{padding:18px 16px 14px; border-bottom:1px solid var(--line);}
+  .brand .logo{display:flex; gap:10px; align-items:center;}
+  .brand .mark{width:40px; height:40px; border-radius:11px; background:var(--accent-soft); color:var(--accent);
+    display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;}
+  .brand .bt{min-width:0;}
+  .brand .bt b{display:block; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .brand .bt span{font-size:12px; color:var(--muted);}
+  .brand select.casaSel{margin-top:12px; font-size:14px; padding:9px 10px;}
+  .sidebar nav{flex:1; padding:8px 10px;}
+  .navsec{font-size:11px; letter-spacing:.09em; color:var(--muted); font-weight:700; margin:16px 10px 6px; text-transform:uppercase;}
+  .sidebar nav button, .sidefoot button{display:flex; align-items:center; gap:11px; width:100%; text-align:left;
+    background:transparent; color:#55556F; padding:10px 12px; border-radius:10px; font-weight:600; margin-bottom:2px; font-size:14.5px;}
+  .sidebar nav button:hover, .sidefoot button:hover{background:var(--card2);}
+  .sidebar nav button.on{background:var(--accent-soft); color:var(--accent);}
+  .sidebar svg{width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0;}
+  .sidebar nav button .badge{margin-left:auto; background:var(--accent); color:#fff; border-radius:10px; padding:1px 8px; font-size:12px;}
+  .sidefoot{padding:10px; border-top:1px solid var(--line);}
+  .powered{text-align:center; color:#C6C5D6; font-size:10.5px; letter-spacing:.18em; padding:8px 0 12px;}
 
-  .occ{display:flex; gap:10px; padding:10px 16px; overflow-x:auto; background:var(--bg); border-bottom:1px solid var(--line);}
-  .occ .amb{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:8px 12px; min-width:150px;}
-  .occ .amb b{font-size:14px;} .occ .amb .n{font-size:13px; color:var(--muted);}
-  .bar{height:7px; background:var(--card2); border-radius:6px; margin-top:6px; overflow:hidden;}
+  .content{flex:1; min-width:0; display:flex; flex-direction:column;}
+  .topbar{display:flex; align-items:center; gap:8px; padding:13px 20px; position:sticky; top:0; z-index:5;
+    background:rgba(247,247,251,.94); backdrop-filter:blur(6px); border-bottom:1px solid var(--line); flex-wrap:wrap;}
+  .datenav{display:flex; align-items:center; gap:6px;}
+  .datenav button{background:#fff; border:1px solid var(--line); color:var(--txt); padding:9px 14px; font-size:16px; min-width:44px;}
+  .datenav .today{font-size:14px; padding:10px 14px; font-weight:600;}
+  .datelabel{font-weight:700; min-width:120px; text-align:center; font-size:16px;}
+  .icnbtn{background:#fff; border:1px solid var(--line); color:var(--txt); padding:10px 13px; font-size:14px;}
+  .grow{flex:1;}
+  .fab{background:var(--accent); color:#fff; font-size:15px; font-weight:700; padding:11px 20px; border-radius:10px;
+    box-shadow:0 4px 14px rgba(124,58,237,.28);}
+  .fab:hover{background:#6D28D9;}
+
+  .occ{display:flex; gap:10px; padding:12px 20px 4px; overflow-x:auto;}
+  .occ .amb{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:9px 13px; min-width:150px; box-shadow:var(--shadow);}
+  .occ .amb b{font-size:13.5px;} .occ .amb .n{font-size:12.5px; color:var(--muted);}
+  .bar{height:6px; background:var(--card2); border-radius:6px; margin-top:6px; overflow:hidden;}
   .bar > i{display:block; height:100%; background:var(--green);}
 
-  .tabs{display:flex; gap:8px; padding:12px 16px; overflow-x:auto;}
-  .tabs button{background:var(--card); color:var(--muted); padding:12px 16px; white-space:nowrap; border:1px solid var(--line);}
-  .tabs button.active{background:var(--accent); color:#fff; border-color:var(--accent);}
-  .tabs button .badge{display:inline-block; margin-left:6px; background:rgba(255,255,255,.18); border-radius:10px; padding:1px 8px; font-size:13px;}
+  .tabs{display:flex; gap:8px; padding:12px 20px; overflow-x:auto;}
+  .tabs button{background:#fff; color:var(--muted); padding:10px 15px; white-space:nowrap; border:1px solid var(--line); font-weight:600; border-radius:20px;}
+  .tabs button.active, .tabs button.on{background:var(--accent-soft); color:var(--accent); border-color:#DCCFF8;}
+  .tabs button .badge{display:inline-block; margin-left:6px; background:var(--card2); color:inherit; border-radius:10px; padding:1px 8px; font-size:12.5px;}
+  .tabs button.active .badge, .tabs button.on .badge{background:#E4D9FB;}
 
-  main{padding:8px 16px 120px;}
+  main{padding:8px 20px 40px;}
   .empty{text-align:center; color:var(--muted); padding:60px 20px;}
-  .rcard{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px 16px; margin-bottom:12px;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; box-shadow:var(--shadow);}
+  .rcard{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-bottom:12px; box-shadow:var(--shadow);}
   .rcard .top{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
-  .rcard .nome{font-size:20px; font-weight:700;}
-  .rcard .hora{margin-left:auto; font-size:22px; font-weight:800;}
-  .rcard .pos{background:var(--card2); border-radius:10px; padding:4px 12px; font-weight:800; font-size:20px;}
-  .rcard .meta{color:var(--muted); margin-top:6px; font-size:15px; line-height:1.5;}
+  .rcard .nome{font-size:18px; font-weight:700;}
+  .rcard .hora{margin-left:auto; font-size:20px; font-weight:800; color:var(--accent);}
+  .rcard .pos{background:var(--accent-soft); color:var(--accent); border-radius:10px; padding:4px 12px; font-weight:800; font-size:18px;}
+  .rcard .meta{color:var(--muted); margin-top:6px; font-size:14px; line-height:1.55;}
   .rcard .meta .ppl{color:var(--txt); font-weight:700;}
-  .pill{font-size:13px; font-weight:700; padding:3px 10px; border-radius:20px; color:#fff;}
-  .tag{font-size:12px; padding:2px 8px; border-radius:6px; background:var(--card2); color:var(--muted); margin-right:6px;}
+  .pill{font-size:12.5px; font-weight:700; padding:3px 10px; border-radius:20px; color:#fff;}
+  .tag{font-size:11.5px; padding:2px 8px; border-radius:6px; background:var(--card2); color:var(--muted); margin-right:6px;}
   .actions{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;}
-  .actions button{flex:1 1 auto; min-width:110px; padding:14px; font-weight:700; color:#fff;}
+  .actions button{flex:1 1 auto; min-width:104px; padding:11px; font-weight:700; color:#fff;}
   .b-green{background:var(--green);} .b-blue{background:var(--accent);} .b-red{background:var(--red);}
   .b-amber{background:var(--amber);} .b-slate{background:var(--slate);} .b-purple{background:var(--purple);}
-  .b-teal{background:#14b8a6;}
+  .b-teal{background:#0D9488;}
+  .del{background:#FDECEF; color:var(--red); font-weight:600; padding:8px 12px; border-radius:8px;}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
 
-  .fab{position:fixed; right:20px; bottom:20px; background:var(--accent); color:#fff; font-size:18px;
-    font-weight:800; padding:18px 24px; border-radius:30px; box-shadow:0 8px 24px rgba(0,0,0,.45); z-index:6;}
-
-  .overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:flex-start;
+  .overlay{position:fixed; inset:0; background:rgba(35,35,56,.45); display:flex; align-items:flex-start;
     justify-content:center; padding:20px; z-index:10; overflow:auto;}
-  .modal{background:var(--card); border:1px solid var(--line); border-radius:18px; width:100%; max-width:560px; padding:20px;}
-  .modal h2{margin:0 0 14px;}
-  .field{margin-bottom:12px;} .field label{display:block; font-size:14px; color:var(--muted); margin-bottom:5px;}
+  .modal{background:#fff; border:1px solid var(--line); border-radius:16px; width:100%; max-width:560px; padding:22px;
+    box-shadow:0 20px 60px rgba(35,35,56,.18);}
+  .modal h2{margin:0 0 14px; font-size:19px;}
+  .field{margin-bottom:12px;} .field label{display:block; font-size:13px; color:var(--muted); margin-bottom:5px; font-weight:600;}
   .row2{display:flex; gap:10px;} .row2 > .field{flex:1;}
-  .toggle{display:flex; align-items:center; gap:10px; background:var(--card2); padding:12px; border-radius:12px;}
+  .toggle{display:flex; align-items:center; gap:10px; background:var(--card2); padding:12px; border-radius:10px;}
   .toggle input{width:auto;}
   .modal .foot{display:flex; gap:10px; margin-top:16px;}
-  .modal .foot button{flex:1; padding:16px; font-weight:700;}
+  .modal .foot button{flex:1; padding:14px; font-weight:700;}
   .b-cancel{background:var(--card2); color:var(--txt);}
   .err{color:var(--red); font-size:14px; margin-top:8px; min-height:18px;}
 
-  .convrow{display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--line); border-radius:12px; margin-bottom:8px; background:var(--card2);}
-  .convrow .ci{flex:1;} .convrow .ci b{font-size:16px;} .convrow .ci .s{color:var(--muted); font-size:13px;}
-  .convrow .del{background:var(--red); color:#fff; padding:10px 14px; min-width:auto;}
+  .convrow{display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--line); border-radius:12px; margin-bottom:8px; background:#fff;}
+  .convrow .ci{flex:1;} .convrow .ci b{font-size:15px;} .convrow .ci .s{color:var(--muted); font-size:13px;}
+  .convrow .del{padding:10px 14px; min-width:auto;}
   .ok-pill{font-size:11px; background:var(--green); color:#fff; padding:2px 8px; border-radius:10px;}
   .linkbox{display:flex; gap:8px; margin-bottom:14px;}
-  .linkbox button{flex:1; padding:14px; font-weight:700; color:#fff;}
+  .linkbox button{flex:1; padding:13px; font-weight:700; color:#fff;}
 
-  .setup{max-width:520px; margin:60px auto; padding:28px; background:var(--card); border:1px solid var(--line); border-radius:18px;}
-  .setup h1{margin-top:0;} .setup p, .setup ol{color:var(--muted); line-height:1.6;}
-  .setup button{width:100%; background:var(--accent); color:#fff; padding:16px; font-weight:700; margin-top:8px;}
+  .setup{max-width:440px; margin:9vh auto; padding:32px 30px; background:#fff; border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow);}
+  .setup h1{margin-top:0; font-size:22px;} .setup p, .setup ol{color:var(--muted); line-height:1.6; font-size:14.5px;}
+  .setup button{width:100%; background:var(--accent); color:#fff; padding:14px; font-weight:700; margin-top:8px; border-radius:10px;}
+  .setup button:hover{background:#6D28D9;}
+
+  /* telas estreitas: sidebar vira barra no topo */
+  @media(max-width:880px){
+    #app{flex-direction:column;}
+    .sidebar{width:100%; height:auto; position:static; border-right:none; border-bottom:1px solid var(--line);}
+    .sidebar nav{display:flex; overflow-x:auto; padding:6px 8px;}
+    .navsec{display:none;}
+    .sidebar nav button{width:auto; white-space:nowrap;}
+    .sidefoot{display:flex; gap:6px; border-top:none; padding:0 8px 8px;}
+    .sidefoot button{width:auto;}
+    .powered{display:none;}
+    .brand{border-bottom:none; padding-bottom:4px;}
+  }
 </style>
 </head>
 <body>
@@ -113,33 +154,68 @@
 
 <!-- ================= APP ================= -->
 <div id="app" class="hidden">
-  <header>
-    <span class="casa" id="casaNome">—</span>
-    <select class="casaSel hidden" id="casaSel" onchange="changeCasa()"></select>
-    <div class="modesw">
-      <button id="m_reservas" class="on" onclick="setModo('reservas')">Reservas</button>
-      <button id="m_calendario" onclick="setModo('calendario')">📅 Calendário</button>
-      <button id="m_fila" onclick="setModo('fila')">Fila de Espera</button>
-      <button id="m_conversas" onclick="setModo('conversas')">💬 Conversas</button>
-      <button id="m_ia" onclick="setModo('ia')">🧠 IA</button>
-      <button id="m_pesquisas" onclick="setModo('pesquisas')">📊 Pesquisas</button>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">
+        <span class="mark">🍻</span>
+        <div class="bt"><b id="casaNome">—</b><span>Restaurante</span></div>
+      </div>
+      <select class="casaSel hidden" id="casaSel" onchange="changeCasa()"></select>
     </div>
+    <nav>
+      <div class="navsec">Operações</div>
+      <button id="m_reservas" class="on" onclick="setModo('reservas')">
+        <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        Reservas</button>
+      <button id="m_calendario" onclick="setModo('calendario')">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Calendário</button>
+      <button id="m_fila" onclick="setModo('fila')">
+        <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Fila de Espera</button>
+      <button onclick="location.href='eventos.html'">
+        <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        Eventos</button>
+      <div class="navsec">Comunicação</div>
+      <button id="m_conversas" onclick="setModo('conversas')">
+        <svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        Conversas</button>
+      <button id="m_ia" onclick="setModo('ia')">
+        <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Inteligência (IA)</button>
+      <div class="navsec">Clientes e Fidelidade</div>
+      <button id="m_pesquisas" onclick="setModo('pesquisas')">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Pesquisas</button>
+    </nav>
+    <div class="sidefoot">
+      <button id="m_config" onclick="setModo('config')">
+        <svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+        Configurações</button>
+      <button onclick="if(confirm('Sair da conta atual?'))doLogout()">
+        <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sair</button>
+    </div>
+    <div class="powered">NEXUS RESERVAS</div>
+  </aside>
+
+  <div class="content">
+  <div class="topbar">
     <div class="datenav">
       <button onclick="shiftDate(-1)">‹</button>
       <span class="datelabel" id="dateLabel">—</span>
       <button onclick="shiftDate(1)">›</button>
       <button class="today" onclick="goToday()">Hoje</button>
-      <button class="icnbtn" onclick="loadData()" title="Atualizar">⟳</button>
-      <button class="icnbtn" id="btnFut" onclick="toggleFuturas()" title="Todas as próximas reservas">📅 Próximas</button>
-      <button class="icnbtn" onclick="location.href='eventos.html'" title="Eventos">🎉 Eventos</button>
-      <button class="icnbtn" onclick="setModo('config')" title="Configurações">⚙</button>
-      <button class="icnbtn" onclick="if(confirm('Sair da conta atual?'))doLogout()" title="Sair / trocar de conta">⏻</button>
     </div>
-  </header>
+    <button class="icnbtn" onclick="loadData()" title="Atualizar">⟳</button>
+    <button class="icnbtn" id="btnFut" onclick="toggleFuturas()" title="Todas as próximas reservas">Próximas</button>
+    <div class="grow"></div>
+    <button class="fab" id="fab" onclick="openCreate()">+ Nova Reserva</button>
+  </div>
 
   <!-- RESERVAS VIEW -->
   <div id="reservasView">
-    <div id="totalDia" style="padding:10px 16px;font-weight:700;background:var(--card);border-bottom:1px solid var(--line);"></div>
+    <div id="totalDia" style="padding:14px 20px 0;font-weight:700;font-size:17px;"></div>
     <div class="occ" id="occ"></div>
     <div class="tabs" id="tabs"></div>
     <main id="list"></main>
@@ -210,7 +286,7 @@
     </div>
   </div>
 
-  <button class="fab" id="fab" onclick="openCreate()">+ Nova Reserva</button>
+  </div><!-- /content -->
 </div>
 
 <!-- ============ MODAL: QR WHATSAPP ============ -->
@@ -332,14 +408,14 @@
       <button onclick="closeAtend()" style="background:var(--card2);min-width:auto;padding:8px 12px;">✕</button>
       <div style="min-width:0;"><div id="atTitle" style="font-weight:700;">—</div><div id="atStatus" style="font-size:13px;color:var(--muted);"></div></div>
       <div style="margin-left:auto;display:flex;gap:8px;flex-shrink:0;">
-        <button id="atAssumir" onclick="assumir()" style="background:#7c3aed;">🙋 Assumir atendimento</button>
+        <button id="atAssumir" onclick="assumir()" style="background:#7c3aed;color:#fff;font-weight:700;padding:10px 14px;">🙋 Assumir atendimento</button>
         <button id="atDevolver" onclick="devolver()" class="hidden" style="background:var(--card2);">🤖 Devolver ao robô</button>
       </div>
     </div>
     <div id="atThread" style="flex:1;overflow-y:auto;padding:12px 4px;display:flex;flex-direction:column;gap:8px;"></div>
     <div style="display:flex;gap:8px;border-top:1px solid var(--line);padding-top:10px;">
       <input id="atInput" placeholder="Assuma o atendimento para responder…" style="flex:1;" disabled onkeydown="if(event.key==='Enter')enviarMsg()">
-      <button id="atSend" onclick="enviarMsg()" disabled>Enviar</button>
+      <button id="atSend" onclick="enviarMsg()" disabled style="background:var(--accent);color:#fff;font-weight:700;padding:10px 18px;">Enviar</button>
     </div>
   </div>
 </div>
@@ -480,12 +556,9 @@ function changeCasa(){
 // ===================== Modo =====================
 function setModo(m){
   modo=m;
-  document.getElementById('m_reservas').classList.toggle('on',m==='reservas');
-  document.getElementById('m_calendario').classList.toggle('on',m==='calendario');
-  document.getElementById('m_fila').classList.toggle('on',m==='fila');
-  document.getElementById('m_conversas').classList.toggle('on',m==='conversas');
-  document.getElementById('m_ia').classList.toggle('on',m==='ia');
-  document.getElementById('m_pesquisas').classList.toggle('on',m==='pesquisas');
+  ['reservas','calendario','fila','conversas','ia','pesquisas','config'].forEach(k=>{
+    const b=document.getElementById('m_'+k); if(b) b.classList.toggle('on',m===k);
+  });
   document.getElementById('reservasView').classList.toggle('hidden',m!=='reservas');
   document.getElementById('calendarioView').classList.toggle('hidden',m!=='calendario');
   document.getElementById('filaView').classList.toggle('hidden',m!=='fila');
@@ -795,7 +868,7 @@ function renderAtend(){
       const dia=String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
       if(dia!==lastDia){ html+=`<div style="align-self:center;background:var(--card2);color:var(--muted);font-size:12px;padding:3px 12px;border-radius:10px;">${dia}</div>`; lastDia=dia; }
       const hh=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
-      html+=`<div style="align-self:${m.minha?'flex-end':'flex-start'};max-width:78%;background:${m.minha?'#075e54':'var(--card2)'};color:${m.minha?'#fff':'var(--txt)'};padding:8px 12px;border-radius:12px;white-space:pre-wrap;word-break:break-word;">${esc(m.texto||'')}<div style="font-size:10px;opacity:.6;text-align:right;margin-top:2px;">${hh}</div></div>`;
+      html+=`<div style="align-self:${m.minha?'flex-end':'flex-start'};max-width:78%;background:${m.minha?'#D9FDD3':'#fff'};border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:12px;white-space:pre-wrap;word-break:break-word;">${esc(m.texto||'')}<div style="font-size:10px;opacity:.55;text-align:right;margin-top:2px;">${hh}</div></div>`;
     });
     thread.innerHTML=html||'<div style="color:var(--muted);align-self:center;padding:20px;">Sem mensagens.</div>';
   } else {
@@ -803,10 +876,10 @@ function renderAtend(){
     const hist=Array.isArray(c.historico)?c.historico:[];
     thread.innerHTML=hist.map(m=>{
       const eu=m.role!=='user';
-      const bg=m.role==='user'?'var(--card2)':(m.humano?'#7c3aed':'#075e54');
+      const bg=m.role==='user'?'#fff':(m.humano?'#F3EEFD':'#D9FDD3');
       const tag=m.role==='user'?'Cliente':(m.humano?'Você':'Robô');
-      return `<div style="align-self:${eu?'flex-end':'flex-start'};max-width:78%;background:${bg};color:#fff;padding:8px 12px;border-radius:12px;">
-        <div style="font-size:11px;opacity:.7;margin-bottom:2px;">${tag}</div>${esc(m.content||'')}</div>`;
+      return `<div style="align-self:${eu?'flex-end':'flex-start'};max-width:78%;background:${bg};border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:12px;">
+        <div style="font-size:11px;opacity:.6;margin-bottom:2px;font-weight:700;">${tag}</div>${esc(m.content||'')}</div>`;
     }).join('')||'<div style="color:var(--muted);align-self:center;padding:20px;">Carregando mensagens…</div>';
   }
   if(nearBottom) thread.scrollTop=thread.scrollHeight;
