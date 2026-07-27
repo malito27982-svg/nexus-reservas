@@ -311,10 +311,16 @@ async function claudeLoop(system, tools, history, exec, maxIter = 5) {
     if (data.type === 'error') {
       console.error('anthropic', JSON.stringify(data).slice(0, 300))
       const t = data.error?.type || ''
-      // chave inválida/sem permissão/billing = erro PERMANENTE: pedir pra repetir só gera loop —
-      // avisa o cliente UMA vez e passa pro atendente humano (27/07, caso Albert Abate 4x "tive um problema")
-      if (t === 'authentication_error' || t === 'permission_error' || t === 'billing_error')
+      // chave inválida/sem permissão/billing = erro PERMANENTE: pedir pra repetir só gera loop.
+      // Plano B (Lucas 27/07): cai pro GEMINI (mesma chave do flyer) — quando a chave Anthropic
+      // voltar, o Claude reassume sozinho (o fallback só roda no erro). Sem Gemini: atendente humano.
+      if (t === 'authentication_error' || t === 'permission_error' || t === 'billing_error') {
+        if (GEMINI_KEY) {
+          try { console.log('↪️ IA fallback: Claude indisponível, usando Gemini'); return await geminiLoop(system, tools, history, exec, maxIter) }
+          catch (e) { console.error('gemini fallback falhou:', e.message) }
+        }
         return { text: 'Nosso atendimento automático deu uma pausa aqui 😔 Já chamei um *atendente humano* pra continuar com você — só um instante! 🙏', followups, _handoff: true }
+      }
       return { text: 'Tive um problema aqui, pode repetir? 🙏', followups }
     }
     if (data.stop_reason === 'tool_use') {
@@ -330,6 +336,45 @@ async function claudeLoop(system, tools, history, exec, maxIter = 5) {
       continue
     }
     const txt = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim()
+    return { text: txt || 'Pode me dar mais detalhes? 🙂', followups }
+  }
+  return { text: 'Vamos continuar? Me diga os detalhes. 🙂', followups }
+}
+
+// mesmo contrato do claudeLoop, mas no Gemini 2.5 Flash (plano B quando a chave Anthropic morre)
+async function geminiLoop(system, tools, history, exec, maxIter = 5) {
+  const sysText = (Array.isArray(system) ? system.map((s) => s.text || '').join('\n') : String(system || '')) +
+    '\nFORMATO WhatsApp: negrito é com *um asterisco*. PROIBIDO markdown de lista (linhas começando com * ou -) e PROIBIDO **dois asteriscos** — escreva em texto corrido, mensagens curtas.'
+  // tools Anthropic -> functionDeclarations do Gemini (schema vazio precisa OMITIR parameters)
+  const decls = tools.map((t) => {
+    const d = { name: t.name, description: t.description || '' }
+    if (t.input_schema && Object.keys(t.input_schema.properties || {}).length) d.parameters = t.input_schema
+    return d
+  })
+  const contents = history.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(m.content) }] }))
+  const followups = []
+  for (let i = 0; i < maxIter; i++) {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: sysText }] }, contents, tools: [{ functionDeclarations: decls }],
+        generationConfig: { maxOutputTokens: 2048, thinkingConfig: { thinkingBudget: 0 } } }),
+    })
+    const data = await res.json()
+    if (data.error) throw new Error(`gemini ${data.error.code}: ${String(data.error.message).slice(0, 200)}`)
+    const parts = data.candidates?.[0]?.content?.parts || []
+    const calls = parts.filter((p) => p.functionCall)
+    if (calls.length) {
+      contents.push({ role: 'model', parts })
+      const respostas = []
+      for (const c of calls) {
+        const out = await exec(c.functionCall.name, c.functionCall.args || {})
+        if (out && Array.isArray(out._followups)) { followups.push(...out._followups); delete out._followups }
+        respostas.push({ functionResponse: { name: c.functionCall.name, response: (out && typeof out === 'object') ? out : { result: out } } })
+      }
+      contents.push({ role: 'user', parts: respostas })
+      continue
+    }
+    const txt = parts.filter((p) => p.text).map((p) => p.text).join('\n').trim()
     return { text: txt || 'Pode me dar mais detalhes? 🙂', followups }
   }
   return { text: 'Vamos continuar? Me diga os detalhes. 🙂', followups }
@@ -648,15 +693,23 @@ async function extrairReservaDoHistorico(casa, historico) {
     const iso = d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
     return `${i === 0 ? 'HOJE, ' : i === 1 ? 'amanhã, ' : ''}${semana} = ${iso}`
   }).join('\n')
+  const sysExtr = `Você analisa a conversa de WhatsApp entre um CLIENTE e o ATENDENTE humano do bar "${casa.nome}". Hoje é ${hojeISO}. Verifique se eles COMBINARAM uma reserva de mesa (data de hoje em diante). Responda SOMENTE um JSON válido, sem markdown: {"combinou":boolean,"nome":string|null,"data":"AAAA-MM-DD"|null,"hora":"HH:MM"|null,"pessoas":number|null,"setor":string|null,"nascimento":"AAAA-MM-DD"|null}. combinou=true SÓ se cliente e atendente fecharam claramente pelo menos DATA e Nº DE PESSOAS. Para datas relativas ("amanhã", "sábado"), use EXATAMENTE este calendário (não calcule por conta própria):\n${calendario}\nCampos não ditos = null.`
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, max_tokens: 400,
-        system: `Você analisa a conversa de WhatsApp entre um CLIENTE e o ATENDENTE humano do bar "${casa.nome}". Hoje é ${hojeISO}. Verifique se eles COMBINARAM uma reserva de mesa (data de hoje em diante). Responda SOMENTE um JSON válido, sem markdown: {"combinou":boolean,"nome":string|null,"data":"AAAA-MM-DD"|null,"hora":"HH:MM"|null,"pessoas":number|null,"setor":string|null,"nascimento":"AAAA-MM-DD"|null}. combinou=true SÓ se cliente e atendente fecharam claramente pelo menos DATA e Nº DE PESSOAS. Para datas relativas ("amanhã", "sábado"), use EXATAMENTE este calendário (não calcule por conta própria):\n${calendario}\nCampos não ditos = null.`,
+      body: JSON.stringify({ model: MODEL, max_tokens: 400, system: sysExtr,
         messages: [{ role: 'user', content: transcript }] }),
     })
     const data = await res.json()
-    const txt = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('')
+    let txt = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('')
+    if (data.type === 'error' && GEMINI_KEY) { // mesmo plano B do agente: Claude fora -> Gemini
+      console.error('extrairReserva anthropic', JSON.stringify(data.error || {}).slice(0, 120))
+      const g = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: sysExtr }] }, contents: [{ role: 'user', parts: [{ text: transcript }] }], generationConfig: { maxOutputTokens: 800, thinkingConfig: { thinkingBudget: 0 } } }),
+      })).json()
+      txt = (g.candidates?.[0]?.content?.parts || []).filter((p) => p.text).map((p) => p.text).join('')
+    }
     const m = txt.match(/\{[\s\S]*\}/)
     return m ? JSON.parse(m[0]) : null
   } catch (e) { console.error('extrairReserva exc', e.message); return null }
