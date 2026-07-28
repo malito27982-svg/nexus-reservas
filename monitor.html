@@ -14,15 +14,20 @@
   @keyframes flash{0%,100%{background:var(--bg);}50%{background:#4A0A14;}}
   .top{display:flex;align-items:center;gap:14px;padding:18px 26px;border-bottom:1px solid var(--line);}
   .top h1{margin:0;font-size:22px;} .top .st{color:var(--muted);font-size:14px;margin-left:auto;text-align:right;}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;padding:24px 26px;}
-  .inst{background:var(--card);border:2px solid var(--line);border-radius:16px;padding:22px;}
-  .inst.ok{border-color:rgba(34,197,94,.5);}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;padding:24px 26px;}
+  .inst{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;}
   .inst.down{border-color:var(--red);background:#2A121A;}
-  .inst .nome{font-size:19px;font-weight:700;margin-bottom:4px;}
-  .inst .num{color:var(--muted);font-size:14px;min-height:18px;}
-  .badge{display:inline-block;margin-top:14px;padding:8px 18px;border-radius:24px;font-weight:800;font-size:16px;}
+  .inst .titulo{font-size:17px;font-weight:700;margin-bottom:14px;}
+  .inst .quem{display:flex;align-items:center;gap:12px;}
+  .inst .foto{width:46px;height:46px;border-radius:50%;object-fit:cover;background:#232732;flex-shrink:0;
+    display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:#8B93A3;}
+  .inst .quem .info{flex:1;min-width:0;}
+  .inst .perfil{font-weight:700;font-size:15.5px;}
+  .inst .num{color:var(--muted);font-size:13.5px;}
+  .inst .conts{display:flex;gap:16px;color:var(--muted);font-size:14px;flex-shrink:0;text-align:center;}
+  .inst .conts b{display:block;color:var(--txt);font-size:15px;}
+  .badge{display:inline-block;margin-top:16px;padding:5px 14px;border-radius:8px;font-weight:700;font-size:13.5px;}
   .b-ok{background:var(--green);color:#04270F;} .b-down{background:var(--red);color:#fff;}
-  .b-off{background:var(--amber);color:#231a02;}
   .banner{margin:18px 26px 0;padding:14px 18px;border-radius:12px;background:#3B2A08;border:1px solid var(--amber);color:#FCD34D;display:none;font-weight:600;}
   .setup{max-width:400px;margin:14vh auto;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:30px;}
   .setup h1{margin-top:0;font-size:20px;}
@@ -65,7 +70,7 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   else mostrar('login');
 });
 function mostrar(id){ document.getElementById('login').classList.toggle('hidden',id!=='login'); document.getElementById('app').classList.toggle('hidden',id!=='app'); if(id==='app') mostraQuem(); }
-async function mostraQuem(){ const {data:{session}}=await sb.auth.getSession(); const em=session?.user?.email||''; const el=document.getElementById('quem'); el.textContent='logado: '+em; if(em&&em!=='monitor@grupobotequim.com.br'&&!em.startsWith('lucas')&&!em.startsWith('giovanna')) el.textContent+=' ⚠️ este login pode não ver todas as unidades — use monitor@'; }
+async function mostraQuem(){ const {data:{session}}=await sb.auth.getSession(); const em=session?.user?.email||''; document.getElementById('quem').textContent='logado: '+em; }
 async function sair(){ try{ await sb.auth.signOut(); }catch(_){} location.reload(); }
 async function entrar(){
   const {error}=await sb.auth.signInWithPassword({email:document.getElementById('em').value.trim(),password:document.getElementById('pw').value});
@@ -73,11 +78,12 @@ async function entrar(){
   mostrar('app'); vigiar(); setInterval(vigiar,30000);
 }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtN(n){ return n==null?'—':Number(n).toLocaleString('pt-BR'); }
 async function vigiar(){
   let d=null;
   try{
     const {data:{session}}=await sb.auth.getSession();
-    const r=await fetch(ROBOT+'/painel/instances',{headers:{'Authorization':'Bearer '+((session&&session.access_token)||'')}});
+    const r=await fetch(ROBOT+'/painel/monitor',{headers:{'Authorization':'Bearer '+((session&&session.access_token)||'')}});
     d=await r.json();
   }catch(e){}
   const agora=new Date().toLocaleTimeString('pt-BR');
@@ -90,20 +96,21 @@ async function vigiar(){
     return;
   }
   falhasRobo=0; banner.style.display='none';
-  const itens=[
-    ...(d.unidades||[]).filter(u=>u.existe||u.conectado).map(u=>({nome:u.casa,numero:u.numero,perfil:u.perfil,conectado:u.conectado,status:u.status})),
-    ...(d.extras||[]).map(x=>({nome:x.perfil||x.instancia,numero:x.numero,perfil:null,conectado:x.conectado,status:x.status})),
-  ];
-  const semInstancia=(d.unidades||[]).filter(u=>!u.existe&&!u.conectado);
-  const caidas=itens.filter(i=>!i.conectado).map(i=>i.nome);
-  document.getElementById('grid').innerHTML=itens.map(i=>`
-    <div class="inst ${i.conectado?'ok':'down'}">
-      <div class="nome">${esc(i.nome)}</div>
-      <div class="num">${esc(i.numero||'')}${i.perfil?' · '+esc(i.perfil):''}</div>
-      <span class="badge ${i.conectado?'b-ok':'b-down'}">${i.conectado?'✅ CONECTADO':'🔴 CAIU — '+esc(i.status)}</span>
-    </div>`).join('')+semInstancia.map(u=>`
-    <div class="inst"><div class="nome">${esc(u.casa)}</div><div class="num">ainda sem WhatsApp conectado</div>
-      <span class="badge b-off">— não configurado</span></div>`).join('');
+  const itens=d.instancias||[];
+  const caidas=itens.filter(i=>!i.conectado).map(i=>i.perfil||i.nome);
+  document.getElementById('grid').innerHTML=itens.map(i=>{
+    const ini=esc((i.perfil||i.nome||'?').trim().charAt(0).toUpperCase());
+    const foto=i.foto?`<img class="foto" src="${esc(i.foto)}" alt="">`:`<span class="foto">${ini}</span>`;
+    return `<div class="inst ${i.conectado?'':'down'}">
+      <div class="titulo">${esc(i.nome)}</div>
+      <div class="quem">
+        ${foto}
+        <div class="info"><div class="perfil">${esc(i.perfil||'—')}</div><div class="num">${esc(i.numero||'')}</div></div>
+        <div class="conts"><span>👤<b>${fmtN(i.contatos)}</b></span><span>💬<b>${fmtN(i.mensagens)}</b></span></div>
+      </div>
+      <span class="badge ${i.conectado?'b-ok':'b-down'}">${i.conectado?'Connected':'🔴 '+esc(i.status)}</span>
+    </div>`;
+  }).join('')||'<div style="color:var(--muted);padding:20px;">Nenhuma instância.</div>';
   document.getElementById('resumo').textContent=caidas.length?('🔴 '+caidas.length+' caído(s): '+caidas.join(', ')):'✅ tudo conectado ('+itens.length+')';
   document.title=(caidas.length?'🔴 '+caidas.join(', ')+' CAIU':'✅ Vigia WhatsApp')+' — Botequim';
   if(caidas.length){ document.body.classList.add('alerta'); if(caidasAntes===null||caidas.length>caidasAntes) apitar(); apitarLento(); }

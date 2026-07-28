@@ -565,6 +565,16 @@ app.get('/painel/instances', async (req, res) => {
   }), extras })
 })
 
+// visão de MONITOR (tela de vigia): TODAS as instâncias, estilo Evolution Manager, só leitura —
+// qualquer login do painel enxerga tudo (é só status; sem botão de ação nenhum)
+app.get('/painel/monitor', async (req, res) => {
+  const u = await exigeLogin(req, res); if (!u) return
+  const lista = await listaInstancias()
+  res.json({ ok: true, instancias: lista.map((x) => ({ nome: x.name, perfil: x.profileName || null, foto: x.profilePicUrl || null,
+    numero: x.ownerJid ? x.ownerJid.split('@')[0] : null, status: x.connectionStatus, conectado: x.connectionStatus === 'open',
+    contatos: x._count?.Contact ?? null, mensagens: x._count?.Message ?? null })) })
+})
+
 // gera QR pra conectar o WhatsApp da unidade (cria a instância se não existir)
 app.post('/painel/qr', async (req, res) => {
   const u = await exigeLogin(req, res); if (!u) return
