@@ -971,13 +971,20 @@ async function processarMensagem(body) {
     }
 
     // ---- fluxo do flyer (texto) ----
+    // "Não" SECO também é desistência (print Giovana 28/07: cliente respondeu "Não" e o robô
+    // tratou como ocasião e seguiu "Ótimo! Qual o tema?") — vale pra ocasião E tema
+    const flyerNega = /^n[ãa]o+[.!…\s]*$|^n$|n[ãa]o quero|n[ãa]o precisa|n[ãa]o vou querer|sem flyer|\bdispenso\b|depois|deixa pra l[áa]|n[ãa]o,? obrig/i
+    const flyerTchau = () => upConversa(casa.id, from, { flyer_etapa: null }).then(() => sendText(from, 'Sem problemas! Sua reserva está garantida. Ficou alguma *dúvida* (horários, endereço, eventos)? É só perguntar 🙂 Te esperamos no Botequim! 🍻'))
     if (conv.flyer_etapa === 'ocasiao') {
-      if (/n[ãa]o quero|n[ãa]o precisa|sem flyer|depois|deixa pra l[áa]|n[ãa]o,? obrig/i.test(texto)) { await upConversa(casa.id, from, { flyer_etapa: null }); await sendText(from, 'Sem problemas! Sua reserva está garantida. Ficou alguma *dúvida* (horários, endereço, eventos)? É só perguntar 🙂 Te esperamos no Botequim! 🍻'); return }
+      if (flyerNega.test(texto.trim())) { await flyerTchau(); return }
       await upConversa(casa.id, from, { flyer_etapa: 'tema', flyer_ocasiao: texto }); await sendText(from, 'Ótimo! 🎉 Qual o *tema/estilo* do flyer? (elegante, retrô, neon, festa colorida...)'); return
     }
-    if (conv.flyer_etapa === 'tema') { await upConversa(casa.id, from, { flyer_etapa: 'foto', flyer_ocasiao: (conv.flyer_ocasiao || '') + '. Tema: ' + texto }); await sendText(from, 'Perfeito! 🎨 Prefere COM a sua foto (envie uma selfie) ou só a ARTE do bar? Responda "minha foto" (e envie a selfie) ou "só o bar".'); return }
+    if (conv.flyer_etapa === 'tema') {
+      if (flyerNega.test(texto.trim())) { await flyerTchau(); return }
+      await upConversa(casa.id, from, { flyer_etapa: 'foto', flyer_ocasiao: (conv.flyer_ocasiao || '') + '. Tema: ' + texto }); await sendText(from, 'Perfeito! 🎨 Prefere COM a sua foto (envie uma selfie) ou só a ARTE do bar? Responda "minha foto" (e envie a selfie) ou "só o bar".'); return }
     if (conv.flyer_etapa === 'foto') {
-      if (/sem foto|s[óo] o bar|s[óo] a arte|^arte|do bar|sem a foto|sem selfie/i.test(texto)) { await sendText(from, 'Perfeito! Montando com a arte do bar... 🎨'); await gerarEnviarFlyer(casa, from, null, conv.flyer_ctx || {}, conv.flyer_ocasiao); return }
+      if (/n[ãa]o quero( mais)?|deixa pra l[áa]|cancela/i.test(texto)) { await flyerTchau(); return }
+      if (/sem foto|s[óo] o bar|s[óo] a arte|^arte|do bar|sem a foto|sem selfie|^n[ãa]o+[.!…\s]*$/i.test(texto.trim())) { await sendText(from, 'Perfeito! Montando com a arte do bar... 🎨'); await gerarEnviarFlyer(casa, from, null, conv.flyer_ctx || {}, conv.flyer_ocasiao); return }
       if (/com foto|minha foto|com a minha|selfie|^sim|quero/i.test(texto)) { await upConversa(casa.id, from, { flyer_etapa: 'selfie' }); await sendText(from, 'Perfeito! Pode enviar sua selfie agora 🤳\n_(usada só para o flyer 🙂)_'); return }
       await sendText(from, 'Responda "minha foto" (e envie a selfie) ou "só o bar" 🙂'); return
     }
