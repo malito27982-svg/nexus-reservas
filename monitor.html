@@ -45,7 +45,8 @@
 <div id="app" class="hidden">
   <div class="top">
     <h1>📟 Vigia WhatsApp</h1>
-    <div class="st"><span id="resumo">—</span><br><span id="quando">—</span></div>
+    <div class="st"><span id="resumo">—</span><br><span id="quando">—</span><br>
+      <span id="quem" style="font-size:12px;">—</span> · <a href="#" onclick="sair();return false;" style="color:var(--muted);font-size:12px;">sair</a></div>
   </div>
   <div class="banner" id="banner">⚠️ Não consegui falar com o robô — verificando de novo em instantes…</div>
   <div class="grid" id="grid"></div>
@@ -63,7 +64,9 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   if(session){ mostrar('app'); vigiar(); setInterval(vigiar,30000); }
   else mostrar('login');
 });
-function mostrar(id){ document.getElementById('login').classList.toggle('hidden',id!=='login'); document.getElementById('app').classList.toggle('hidden',id!=='app'); }
+function mostrar(id){ document.getElementById('login').classList.toggle('hidden',id!=='login'); document.getElementById('app').classList.toggle('hidden',id!=='app'); if(id==='app') mostraQuem(); }
+async function mostraQuem(){ const {data:{session}}=await sb.auth.getSession(); const em=session?.user?.email||''; const el=document.getElementById('quem'); el.textContent='logado: '+em; if(em&&em!=='monitor@grupobotequim.com.br'&&!em.startsWith('lucas')&&!em.startsWith('giovanna')) el.textContent+=' ⚠️ este login pode não ver todas as unidades — use monitor@'; }
+async function sair(){ try{ await sb.auth.signOut(); }catch(_){} location.reload(); }
 async function entrar(){
   const {error}=await sb.auth.signInWithPassword({email:document.getElementById('em').value.trim(),password:document.getElementById('pw').value});
   if(error){ document.getElementById('loginErr').textContent='E-mail ou senha inválidos.'; return; }
