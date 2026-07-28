@@ -1080,6 +1080,9 @@ async function processarMensagem(body) {
   }
 }
 
+// carimbo de versão — prova qual código está no ar (debug deploy 28/07)
+app.get('/versao', (req, res) => res.json({ v: 'flyer-nao-fix', commit: '1c97247' }))
+
 // rede de segurança: erro não tratado NUNCA derruba o robô (crash-loop da aba Conversas, 24/07)
 process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e?.message || e))
 process.on('uncaughtException', (e) => console.error('uncaughtException:', e?.message || e))
