@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vigia WhatsApp — Botequim</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{ --bg:#0F1115; --card:#1A1D24; --line:#2C313C; --txt:#EEF1F6; --muted:#8B93A3;
+    --green:#22C55E; --red:#EF4444; --amber:#F59E0B; --accent:#7C3AED; }
+  *{box-sizing:border-box;} html,body{margin:0;height:100%;}
+  body{font-family:'Segoe UI',-apple-system,Roboto,Arial,sans-serif;background:var(--bg);color:var(--txt);}
+  body.alerta{animation:flash 1s infinite;}
+  @keyframes flash{0%,100%{background:var(--bg);}50%{background:#4A0A14;}}
+  .top{display:flex;align-items:center;gap:14px;padding:18px 26px;border-bottom:1px solid var(--line);}
+  .top h1{margin:0;font-size:22px;} .top .st{color:var(--muted);font-size:14px;margin-left:auto;text-align:right;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;padding:24px 26px;}
+  .inst{background:var(--card);border:2px solid var(--line);border-radius:16px;padding:22px;}
+  .inst.ok{border-color:rgba(34,197,94,.5);}
+  .inst.down{border-color:var(--red);background:#2A121A;}
+  .inst .nome{font-size:19px;font-weight:700;margin-bottom:4px;}
+  .inst .num{color:var(--muted);font-size:14px;min-height:18px;}
+  .badge{display:inline-block;margin-top:14px;padding:8px 18px;border-radius:24px;font-weight:800;font-size:16px;}
+  .b-ok{background:var(--green);color:#04270F;} .b-down{background:var(--red);color:#fff;}
+  .b-off{background:var(--amber);color:#231a02;}
+  .banner{margin:18px 26px 0;padding:14px 18px;border-radius:12px;background:#3B2A08;border:1px solid var(--amber);color:#FCD34D;display:none;font-weight:600;}
+  .setup{max-width:400px;margin:14vh auto;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:30px;}
+  .setup h1{margin-top:0;font-size:20px;}
+  input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#232732;color:var(--txt);font-size:16px;margin-bottom:10px;outline:none;}
+  button{width:100%;padding:13px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;font-size:16px;cursor:pointer;}
+  .err{color:var(--red);font-size:14px;min-height:18px;margin-bottom:6px;}
+  .hidden{display:none!important;}
+</style>
+</head>
+<body>
+
+<div id="login" class="setup hidden">
+  <h1>📟 Vigia WhatsApp — Botequim</h1>
+  <div class="err" id="loginErr"></div>
+  <input id="em" type="email" placeholder="e-mail" autocomplete="username">
+  <input id="pw" type="password" placeholder="senha" autocomplete="current-password" onkeydown="if(event.key==='Enter')entrar()">
+  <button onclick="entrar()">Entrar e vigiar</button>
+</div>
+
+<div id="app" class="hidden">
+  <div class="top">
+    <h1>📟 Vigia WhatsApp</h1>
+    <div class="st"><span id="resumo">—</span><br><span id="quando">—</span></div>
+  </div>
+  <div class="banner" id="banner">⚠️ Não consegui falar com o robô — verificando de novo em instantes…</div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>
+const SB_URL='https://kuyhkltbwlkvtgbabscv.supabase.co';
+const SB_KEY='sb_publishable_dW-JZ00n74dSLCrznBJ6gw_K8AE1VIq';
+const ROBOT='https://evolution-robot-production.up.railway.app';
+const sb=window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true}});
+let caidasAntes=null, falhasRobo=0;
+
+window.addEventListener('DOMContentLoaded', async ()=>{
+  const {data:{session}}=await sb.auth.getSession();
+  if(session){ mostrar('app'); vigiar(); setInterval(vigiar,30000); }
+  else mostrar('login');
+});
+function mostrar(id){ document.getElementById('login').classList.toggle('hidden',id!=='login'); document.getElementById('app').classList.toggle('hidden',id!=='app'); }
+async function entrar(){
+  const {error}=await sb.auth.signInWithPassword({email:document.getElementById('em').value.trim(),password:document.getElementById('pw').value});
+  if(error){ document.getElementById('loginErr').textContent='E-mail ou senha inválidos.'; return; }
+  mostrar('app'); vigiar(); setInterval(vigiar,30000);
+}
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function vigiar(){
+  let d=null;
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const r=await fetch(ROBOT+'/painel/instances',{headers:{'Authorization':'Bearer '+((session&&session.access_token)||'')}});
+    d=await r.json();
+  }catch(e){}
+  const agora=new Date().toLocaleTimeString('pt-BR');
+  document.getElementById('quando').textContent='última verificação: '+agora+' · atualiza a cada 30s';
+  const banner=document.getElementById('banner');
+  if(!d||!d.ok){
+    falhasRobo++;
+    banner.style.display='block';
+    if(falhasRobo>=2){ document.body.classList.add('alerta'); apitar(); document.title='🔴 ROBÔ FORA — Vigia'; }
+    return;
+  }
+  falhasRobo=0; banner.style.display='none';
+  const itens=[
+    ...(d.unidades||[]).filter(u=>u.existe||u.conectado).map(u=>({nome:u.casa,numero:u.numero,perfil:u.perfil,conectado:u.conectado,status:u.status})),
+    ...(d.extras||[]).map(x=>({nome:x.perfil||x.instancia,numero:x.numero,perfil:null,conectado:x.conectado,status:x.status})),
+  ];
+  const semInstancia=(d.unidades||[]).filter(u=>!u.existe&&!u.conectado);
+  const caidas=itens.filter(i=>!i.conectado).map(i=>i.nome);
+  document.getElementById('grid').innerHTML=itens.map(i=>`
+    <div class="inst ${i.conectado?'ok':'down'}">
+      <div class="nome">${esc(i.nome)}</div>
+      <div class="num">${esc(i.numero||'')}${i.perfil?' · '+esc(i.perfil):''}</div>
+      <span class="badge ${i.conectado?'b-ok':'b-down'}">${i.conectado?'✅ CONECTADO':'🔴 CAIU — '+esc(i.status)}</span>
+    </div>`).join('')+semInstancia.map(u=>`
+    <div class="inst"><div class="nome">${esc(u.casa)}</div><div class="num">ainda sem WhatsApp conectado</div>
+      <span class="badge b-off">— não configurado</span></div>`).join('');
+  document.getElementById('resumo').textContent=caidas.length?('🔴 '+caidas.length+' caído(s): '+caidas.join(', ')):'✅ tudo conectado ('+itens.length+')';
+  document.title=(caidas.length?'🔴 '+caidas.join(', ')+' CAIU':'✅ Vigia WhatsApp')+' — Botequim';
+  if(caidas.length){ document.body.classList.add('alerta'); if(caidasAntes===null||caidas.length>caidasAntes) apitar(); apitarLento(); }
+  else{ document.body.classList.remove('alerta'); }
+  caidasAntes=caidas.length;
+}
+let ultimoApito=0;
+function apitarLento(){ if(Date.now()-ultimoApito>60000) apitar(); } // enquanto tiver algo caído, apita 1x/min
+function apitar(){ try{ ultimoApito=Date.now(); const ctx=new (window.AudioContext||window.webkitAudioContext)(); const t=ctx.currentTime;
+  [[660,0],[520,.25],[660,.5],[520,.75]].forEach(([f,dl])=>{ const o=ctx.createOscillator(),g=ctx.createGain(); o.connect(g); g.connect(ctx.destination);
+    o.frequency.value=f; g.gain.setValueAtTime(.4,t+dl); g.gain.exponentialRampToValueAtTime(.001,t+dl+.22); o.start(t+dl); o.stop(t+dl+.24); });
+}catch(_){}}
+</script>
+</body>
+</html>

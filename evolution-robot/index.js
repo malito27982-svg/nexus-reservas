@@ -549,16 +549,20 @@ async function listaInstancias() {
 app.get('/painel/instances', async (req, res) => {
   const u = await exigeLogin(req, res); if (!u) return
   const perm = await casasPermitidas(u)
-  let casas = (await sb.from('casas').select('id,nome,nome_curto,slug').eq('ativo', true).order('nome')).data ?? []
-  casas = casas.filter((c) => podeCasa(perm, c.id))
+  const todas = (await sb.from('casas').select('id,nome,nome_curto,slug').eq('ativo', true).order('nome')).data ?? []
+  const casas = todas.filter((c) => podeCasa(perm, c.id))
   const lista = await listaInstancias()
+  // instâncias que não são de nenhuma casa (ex.: zerobobina) — aparecem no monitor como "extras"
+  const mapped = new Set(todas.map((c) => instDaCasa(c.slug)))
+  const extras = lista.filter((x) => !mapped.has(x.name)).map((x) => ({ instancia: x.name, perfil: x.profileName || null,
+    status: x.connectionStatus, conectado: x.connectionStatus === 'open', numero: x.ownerJid ? '+' + x.ownerJid.split('@')[0] : null }))
   res.json({ ok: true, unidades: casas.map((c) => {
     const inst = instDaCasa(c.slug)
     const i = lista.find((x) => x.name === inst)
     const status = i?.connectionStatus || 'inexistente'
     return { casa_id: c.id, casa: c.nome, slug: c.slug, instancia: inst, existe: !!i, status, conectado: status === 'open',
       numero: i?.ownerJid ? '+' + i.ownerJid.split('@')[0] : null, perfil: i?.profileName || null }
-  }) })
+  }), extras })
 })
 
 // gera QR pra conectar o WhatsApp da unidade (cria a instância se não existir)
