@@ -50,6 +50,7 @@
 <div id="app" class="hidden">
   <div class="top">
     <h1>📟 Vigia WhatsApp</h1>
+    <button onclick="telaCheia()" style="width:auto;padding:10px 16px;background:#232732;border:1px solid var(--line);color:var(--txt);font-size:14px;">⛶ Tela cheia</button>
     <div class="st"><span id="resumo">—</span><br><span id="quando">—</span><br>
       <span id="quem" style="font-size:12px;">—</span> · <a href="#" onclick="sair();return false;" style="color:var(--muted);font-size:12px;">sair</a></div>
   </div>
@@ -72,6 +73,11 @@ window.addEventListener('DOMContentLoaded', async ()=>{
 function mostrar(id){ document.getElementById('login').classList.toggle('hidden',id!=='login'); document.getElementById('app').classList.toggle('hidden',id!=='app'); if(id==='app') mostraQuem(); }
 async function mostraQuem(){ const {data:{session}}=await sb.auth.getSession(); const em=session?.user?.email||''; document.getElementById('quem').textContent='logado: '+em; }
 async function sair(){ try{ await sb.auth.signOut(); }catch(_){} location.reload(); }
+function telaCheia(){ // o clique aqui também libera o som do alarme (regra dos navegadores)
+  try{ if(document.fullscreenElement){ document.exitFullscreen(); } else { document.documentElement.requestFullscreen(); } }catch(_){}
+  apitarMudo();
+}
+function apitarMudo(){ try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const o=ctx.createOscillator(),g=ctx.createGain(); o.connect(g); g.connect(ctx.destination); g.gain.value=0.001; o.start(); o.stop(ctx.currentTime+0.05); }catch(_){} }
 async function entrar(){
   const {error}=await sb.auth.signInWithPassword({email:document.getElementById('em').value.trim(),password:document.getElementById('pw').value});
   if(error){ document.getElementById('loginErr').textContent='E-mail ou senha inválidos.'; return; }
