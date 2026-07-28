@@ -344,7 +344,8 @@ async function claudeLoop(system, tools, history, exec, maxIter = 5) {
 // mesmo contrato do claudeLoop, mas no Gemini 2.5 Flash (plano B quando a chave Anthropic morre)
 async function geminiLoop(system, tools, history, exec, maxIter = 5) {
   const sysText = (Array.isArray(system) ? system.map((s) => s.text || '').join('\n') : String(system || '')) +
-    '\nFORMATO WhatsApp: negrito é com *um asterisco*. PROIBIDO markdown de lista (linhas começando com * ou -) e PROIBIDO **dois asteriscos** — escreva em texto corrido, mensagens curtas.'
+    '\nFORMATO WhatsApp: negrito é com *um asterisco*. PROIBIDO markdown de lista (linhas começando com * ou -) e PROIBIDO **dois asteriscos** — escreva em texto corrido, mensagens curtas.' +
+    '\nPROIBIDO REPETIR: nunca mande de novo uma resposta igual ou quase igual à que você já deu nesta conversa (olhe o histórico). Se o cliente insistir ou você não tiver a informação (ex.: telefone da casa), diga UMA vez que não tem e ofereça chamar um atendente respondendo "atendente".'
   // tools Anthropic -> functionDeclarations do Gemini (schema vazio precisa OMITIR parameters)
   const decls = tools.map((t) => {
     const d = { name: t.name, description: t.description || '' }
@@ -1081,7 +1082,7 @@ async function processarMensagem(body) {
 }
 
 // carimbo de versão — prova qual código está no ar (debug deploy 28/07)
-app.get('/versao', (req, res) => res.json({ v: 'flyer-nao-fix', commit: '1c97247' }))
+app.get('/versao', (req, res) => res.json({ v: 'anti-papagaio', commit: 'login-trim' }))
 
 // rede de segurança: erro não tratado NUNCA derruba o robô (crash-loop da aba Conversas, 24/07)
 process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e?.message || e))

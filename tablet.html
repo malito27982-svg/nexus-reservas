@@ -146,7 +146,7 @@
 <div id="login" class="setup hidden">
   <h1>🍻 Painel Botequim</h1>
   <p>Entre com seu acesso para ver reservas, conversas e atendimento.</p>
-  <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@grupobotequim.com.br" autocomplete="username"></div>
+  <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@grupobotequim.com.br" autocomplete="username" autocapitalize="none" autocorrect="off"></div>
   <div class="field"><label>Senha</label><input id="loginPass" type="password" placeholder="sua senha" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
   <div class="err" id="loginErr"></div>
   <button onclick="doLogin()">Entrar</button>
@@ -520,7 +520,7 @@ async function init(){
 async function doLogin(){
   setText('loginErr','');
   const email=(document.getElementById('loginEmail').value||'').trim();
-  const password=document.getElementById('loginPass').value||'';
+  const password=(document.getElementById('loginPass').value||'').trim(); // teclado de tablet poe espaco no fim e o login falha (caso meninas SCS 28/07)
   if(!email||!password){ setText('loginErr','Preencha e-mail e senha.'); return; }
   const { error }=await sb.auth.signInWithPassword({ email, password });
   if(error){ setText('loginErr','E-mail ou senha inválidos.'); return; }

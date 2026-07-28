@@ -79,7 +79,7 @@ function telaCheia(){ // o clique aqui também libera o som do alarme (regra dos
 }
 function apitarMudo(){ try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const o=ctx.createOscillator(),g=ctx.createGain(); o.connect(g); g.connect(ctx.destination); g.gain.value=0.001; o.start(); o.stop(ctx.currentTime+0.05); }catch(_){} }
 async function entrar(){
-  const {error}=await sb.auth.signInWithPassword({email:document.getElementById('em').value.trim(),password:document.getElementById('pw').value});
+  const {error}=await sb.auth.signInWithPassword({email:document.getElementById('em').value.trim(),password:(document.getElementById('pw').value||'').trim()});
   if(error){ document.getElementById('loginErr').textContent='E-mail ou senha inválidos.'; return; }
   mostrar('app'); vigiar(); setInterval(vigiar,30000);
 }
