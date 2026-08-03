@@ -22,6 +22,9 @@ const SB_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 const ANON_KEY = process.env.SUPABASE_ANON_KEY || ''
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || ''
 const GEMINI_KEY = process.env.GEMINI_FLYER_KEY || process.env.GEMINI_API_KEY || ''
+// conta nova (admin@nexusorbital, 03/08/2026) não tem acesso aos modelos 2.5 — usar 3.x
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash'
+const GEMINI_IMG_MODEL = process.env.GEMINI_IMG_MODEL || 'gemini-3.1-flash-image'
 const CASA_SLUG = process.env.CASA_SLUG || ''
 const MODEL = process.env.MODEL || 'claude-haiku-4-5-20251001'
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || ''
@@ -306,6 +309,8 @@ REGRAS: nunca invente itens/preços. Não confirme sem finalizar_pedido com ok:t
 
 // loop generico Claude (retorna {text, followups})
 async function claudeLoop(system, tools, history, exec, maxIter = 5) {
+  // Gemini TITULAR (Lucas 03/08): sem chave Anthropic no ambiente, vai DIRETO no Gemini — não gasta uma chamada só pra falhar
+  if (!ANTHROPIC_KEY && GEMINI_KEY) return geminiLoop(system, tools, history, exec, maxIter)
   const messages = history.map((m) => ({ role: m.role, content: m.content }))
   const followups = []
   for (let i = 0; i < maxIter; i++) {
@@ -361,7 +366,7 @@ async function geminiLoop(system, tools, history, exec, maxIter = 5) {
   const contents = history.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(m.content) }] }))
   const followups = []
   for (let i = 0; i < maxIter; i++) {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ systemInstruction: { parts: [{ text: sysText }] }, contents, tools: [{ functionDeclarations: decls }],
         generationConfig: { maxOutputTokens: 2048, thinkingConfig: { thinkingBudget: 0 } } }),
@@ -468,7 +473,7 @@ async function fetchTimeout(url, opts = {}, ms = 60000) {
 }
 async function imagemApropriada(b64, mime) {
   try {
-    const data = await (await fetchTimeout(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: 'Esta imagem tem nudez, conteúdo sexual, violência explícita ou algo impróprio para um flyer público de bar? Responda SOMENTE SIM ou NAO.' }] }] }) }, 30000)).json()
+    const data = await (await fetchTimeout(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: 'Esta imagem tem nudez, conteúdo sexual, violência explícita ou algo impróprio para um flyer público de bar? Responda SOMENTE SIM ou NAO.' }] }] }) }, 30000)).json()
     const txt = (data?.candidates?.[0]?.content?.parts ?? []).map((p) => p.text || '').join(' ').toUpperCase(); return !txt.includes('SIM')
   } catch (_) { return true }
 }
@@ -485,7 +490,7 @@ async function gerarFlyerGemini(selfie, ctx, ocasiao, extra) {
   if (!GEMINI_KEY) { console.error('flyer: GEMINI_KEY/GEMINI_FLYER_KEY não setada no ambiente'); return null }
   const t0 = Date.now()
   try {
-    const data = await (await fetchTimeout(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { imageConfig: { aspectRatio: '9:16' } } }) }, 90000)).json()
+    const data = await (await fetchTimeout(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMG_MODEL}:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { imageConfig: { aspectRatio: '9:16' } } }) }, 90000)).json()
     for (const p of (data?.candidates?.[0]?.content?.parts ?? [])) { const d = p.inlineData?.data ?? p.inline_data?.data; if (d) { console.log(`flyer: imagem OK em ${Date.now() - t0}ms`); return { b64: d } } }
     console.error(`flyer: Gemini respondeu sem imagem (${Date.now() - t0}ms):`, JSON.stringify(data).slice(0, 400))
   } catch (e) { console.error(`flyer: exceção Gemini (${Date.now() - t0}ms):`, e.message) }
@@ -686,16 +691,19 @@ async function extrairReservaDoHistorico(casa, historico) {
   }).join('\n')
   const sysExtr = `Você analisa a conversa de WhatsApp entre um CLIENTE e o ATENDENTE humano do bar "${casa.nome}". Hoje é ${hojeISO}. Verifique se eles COMBINARAM uma reserva de mesa (data de hoje em diante). Responda SOMENTE um JSON válido, sem markdown: {"combinou":boolean,"nome":string|null,"data":"AAAA-MM-DD"|null,"hora":"HH:MM"|null,"pessoas":number|null,"setor":string|null,"nascimento":"AAAA-MM-DD"|null}. combinou=true SÓ se cliente e atendente fecharam claramente pelo menos DATA e Nº DE PESSOAS. Para datas relativas ("amanhã", "sábado"), use EXATAMENTE este calendário (não calcule por conta própria):\n${calendario}\nCampos não ditos = null.`
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST', headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, max_tokens: 400, system: sysExtr,
-        messages: [{ role: 'user', content: transcript }] }),
-    })
-    const data = await res.json()
-    let txt = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('')
-    if (data.type === 'error' && GEMINI_KEY) { // mesmo plano B do agente: Claude fora -> Gemini
-      console.error('extrairReserva anthropic', JSON.stringify(data.error || {}).slice(0, 120))
-      const g = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
+    let txt = ''
+    if (ANTHROPIC_KEY) {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: MODEL, max_tokens: 400, system: sysExtr,
+          messages: [{ role: 'user', content: transcript }] }),
+      })
+      const data = await res.json()
+      txt = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('')
+      if (data.type === 'error') { console.error('extrairReserva anthropic', JSON.stringify(data.error || {}).slice(0, 120)); txt = '' }
+    }
+    if (!txt && GEMINI_KEY) { // Gemini titular (Lucas 03/08) — ou plano B se o Claude falhou
+      const g = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ systemInstruction: { parts: [{ text: sysExtr }] }, contents: [{ role: 'user', parts: [{ text: transcript }] }], generationConfig: { maxOutputTokens: 800, thinkingConfig: { thinkingBudget: 0 } } }),
       })).json()
