@@ -77,6 +77,18 @@ async function enviarImagemB64(numero, b64, caption) {
 async function enviarDocumento(numero, url, filename, caption) {
   return enfileirar('documento', numero, { media: url, fileName: filename, caption: caption || '' })
 }
+// Lucas 03/08: reagir com emoji à mensagem do cliente (key = __origKey que o agente mandou no webhook)
+async function enviarReacao(numero, key, emoji) {
+  if (!key?.id) return null
+  return enfileirar('reacao', numero, { key, emoji: String(emoji || '👍').slice(0, 8) })
+}
+// Lucas 03/08: o robô OUVE áudio e ENTENDE figurinha — Gemini multimodal (mesma chave da conversa)
+async function entenderMidiaGemini(b64, mime, pergunta) {
+  try {
+    const data = await (await fetchTimeout(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: pergunta }] }], generationConfig: { thinkingConfig: { thinkingBudget: 0 } } }) }, 45000)).json()
+    return (data.candidates?.[0]?.content?.parts || []).filter((p) => p.text).map((p) => p.text).join('').trim() || null
+  } catch (e) { console.error('entenderMidia', e.message); return null }
+}
 // mídia recebida (selfie do flyer): o rv-agent baixa no PC (só ele tem as chaves
 // da sessão) e manda o base64 DENTRO do webhook (data.__b64)
 async function baixarMidiaB64(dataMsg) {
@@ -217,7 +229,7 @@ async function criarReserva(casa, from, input) {
 }
 
 // ===================== AGENTE RESERVA =====================
-async function runAgent(casa, from, history) {
+async function runAgent(casa, from, history, reactKey) {
   const ambientes = (await sb.from('ambientes').select('id,nome,limite_pessoas,capacidade_min_reserva,capacidade_max_reserva').eq('casa_id', casa.id).eq('ativo', true).order('ordem')).data ?? []
   // cliente recorrente: não pedir os dados de novo (spec Giovanna 22/07)
   const cli = (await sb.from('clientes').select('nome,data_nascimento').eq('casa_id', casa.id).eq('telefone', from).maybeSingle()).data
@@ -266,6 +278,8 @@ ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nasc
     { name: 'chamar_atendente', description: 'Transfere a conversa AGORA pra um atendente humano. Use quando: o cliente pedir pagamento antecipado/sinal, quiser a programação musical exata de um dia, pedir uma pessoa, ou você não tiver a informação.', input_schema: { type: 'object', properties: { motivo: { type: 'string' } }, required: [] } },
     // QA Giovana 03/08: agente inventava link de cardápio — agora manda o PDF de verdade
     { name: 'enviar_cardapio', description: 'Envia o PDF do cardápio completo da casa direto no chat. Use SEMPRE que o cliente pedir cardápio, menu, pratos ou preços de comida. NUNCA invente links de cardápio.', input_schema: { type: 'object', properties: {}, required: [] } },
+    // Lucas 03/08: o robô pode reagir com emoji como um atendente humano faria
+    { name: 'reagir', description: 'Reage com UM emoji à mensagem do cliente (como no WhatsApp). Use com moderação quando fizer sentido: agradecimento/elogio = ❤️, confirmação animada = 👍, comemoração (aniversário, título) = 🎉. NUNCA em reclamação ou dúvida. No máximo 1 por mensagem, e continue respondendo normalmente em texto.', input_schema: { type: 'object', properties: { emoji: { type: 'string' } }, required: ['emoji'] } },
   ]
   return claudeLoop(system, tools, history, async (name, inp) => {
     if (name === 'consultar_disponibilidade') return consultarDisponibilidade(casa, inp)
@@ -278,6 +292,10 @@ ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nasc
     if (name === 'enviar_cardapio') {
       const ok = await enviarPdfCardapio(casa, from)
       return ok ? { ok: true, instrucao: 'O PDF do cardápio ACABOU de ser enviado no chat. Só confirme ao cliente que o cardápio chegou — NÃO mande nenhum link.' } : { ok: false, instrucao: 'Cardápio não cadastrado pra esta casa — chame chamar_atendente.' }
+    }
+    if (name === 'reagir') {
+      if (reactKey) await enviarReacao(from, reactKey, inp?.emoji)
+      return { ok: true, instrucao: 'Reação enviada. Continue a resposta em texto normalmente (curta).' }
     }
     return { erro: 'desconhecida' }
   })
@@ -897,10 +915,14 @@ async function processarMensagem(body) {
     if (jid.endsWith('@g.us')) return
     if (jaProcessada(key.id)) { console.log('↩️ msg duplicada ignorada', key.id); return }
     const from = jid.split('@')[0]
-    const isImage = !!d.message?.imageMessage
-    const texto = extrairTexto(d.message)
-    console.log(`💬 ${d.pushName || from}: ${isImage ? '[imagem] ' : ''}${texto || ''}`)
-    logMensagem(body.instance || INSTANCE, from, false, texto || (isImage ? '📷 Foto' : '[mensagem]'))
+    const mm = d.message || {}
+    const isImage = !!mm.imageMessage
+    const isAudio = !!mm.audioMessage
+    const isSticker = !!mm.stickerMessage
+    const reacaoIn = mm.reactionMessage || null
+    let texto = extrairTexto(d.message)
+    console.log(`💬 ${d.pushName || from}: ${isImage ? '[imagem] ' : ''}${isAudio ? '[áudio] ' : ''}${isSticker ? '[figurinha] ' : ''}${reacaoIn ? `[reação ${reacaoIn.text || ''}] ` : ''}${texto || ''}`)
+    logMensagem(body.instance || INSTANCE, from, false, texto || (isImage ? '📷 Foto' : isAudio ? '🎙️ Áudio' : isSticker ? '🎨 Figurinha' : reacaoIn ? `Reagiu ${reacaoIn.text || ''}` : '[mensagem]'))
 
     // instância mapeada no CASA_MAP OU instância com nome = slug da casa; fallback = CASA_SLUG
     let casa = await getCasa(CASA_MAP[body.instance] || body.instance)
@@ -908,6 +930,14 @@ async function processarMensagem(body) {
     if (!casa) { console.error('!! casa não encontrada p/ instância', body.instance); return }
     const conv = await getConversa(casa.id, from)
     await gravaNome(casa.id, from, d.pushName || null)
+
+    // ---- REAÇÃO recebida (Lucas 03/08): 👍/❤️ no lembrete de confirmação vale como SIM; o resto só registra
+    if (reacaoIn) {
+      const emj = String(reacaoIn.text || '')
+      if (!conv.handoff && emj && conv.aguardando === 'lembrete' && conv.lembrete_reserva_id && /(👍|❤|✅|🙏|😍|🥰|💚|🍻|🎉)/u.test(emj)) {
+        texto = 'sim' // segue o fluxo normal e cai no tratador do lembrete
+      } else return
+    }
 
     // humano assumiu
     if (conv.handoff) {
@@ -931,6 +961,21 @@ async function processarMensagem(body) {
 
     await sleep(rand(PRE_MIN, PRE_MAX)) // espera humana (nao digitar na hora)
 
+    // ---- ÁUDIO (Lucas 03/08): o robô OUVE — transcreve com Gemini e segue o fluxo como se fosse texto
+    if (isAudio) {
+      const t = d.__b64 ? await entenderMidiaGemini(d.__b64, mm.audioMessage?.mimetype || 'audio/ogg', 'Transcreva este áudio em português do Brasil EXATAMENTE como falado. Responda SÓ o texto transcrito, sem comentários nem rótulos.') : null
+      if (!t) { await sendText(from, 'Não consegui ouvir seu áudio direitinho 🙏 Pode escrever, por favor?'); return }
+      texto = t
+      console.log(`🎙️ transcrito: ${t.slice(0, 100)}`)
+      logMensagem(body.instance || INSTANCE, from, false, `🎙️ ${t.slice(0, 500)}`)
+    }
+    // ---- FIGURINHA (Lucas 03/08): reage 👍 e entende o que ela expressa pra responder no contexto
+    if (isSticker) {
+      await enviarReacao(from, d.__origKey, '👍')
+      const desc = d.__b64 ? await entenderMidiaGemini(d.__b64, mm.stickerMessage?.mimetype || 'image/webp', 'Descreva em UMA frase curta o que esta figurinha de WhatsApp expressa (emoção ou mensagem). Responda SÓ a frase.') : null
+      texto = `[o cliente enviou uma figurinha${desc ? `: ${desc}` : ''}]`
+    }
+
     // ---- FLYER: imagem (selfie) ----
     if (isImage && (conv.flyer_etapa === 'selfie' || conv.flyer_etapa === 'foto')) {
       await sendText(from, 'Perfeito! Montando o seu flyer... 🎨')
@@ -939,7 +984,7 @@ async function processarMensagem(body) {
       await gerarEnviarFlyer(casa, from, foto, conv.flyer_ctx, conv.flyer_ocasiao); return
     }
     if (isImage) { await sendText(from, 'Recebi sua foto 🙂 Me conta por texto: pra quantas pessoas, que dia e horário?'); return }
-    if (!texto.trim()) { await sendText(from, 'Por enquanto eu entendo texto e fotos 🙂'); return }
+    if (!texto.trim()) { await sendText(from, 'Por enquanto eu entendo texto, áudio e fotos 🙂'); return }
 
     // saudação isolada SEMPRE reseta a conversa — roda ANTES de qualquer fluxo pendente (flyer/delivery/velho histórico).
     // Cliente com reserva FUTURA (QA Giovana 24/07): em vez do menu genérico, abre reconhecendo a reserva
@@ -1118,7 +1163,7 @@ async function processarMensagem(body) {
       await upConversa(casa.id, from, { saudou: true })
     }
     history.push({ role: 'user', content: texto })
-    const reply = await runAgent(casa, from, history)
+    const reply = await runAgent(casa, from, history, d.__origKey)
     if (reply.text) { history.push({ role: 'assistant', content: reply.text }); await sendText(from, reply.text) }
     for (const fu of reply.followups ?? []) { await sendText(from, fu); history.push({ role: 'assistant', content: fu }) }
     await upConversa(casa.id, from, { historico: history })
