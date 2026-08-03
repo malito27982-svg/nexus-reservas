@@ -256,6 +256,7 @@ Se vier "aviso" (ex.: promoção de almoço), mencione UMA vez em TODA reserva, 
 EVENTOS: se vier "evento", avise com entusiasmo (título, descrição, menu/preço).
 ${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}SEM RESPOSTA: dúvida que NÃO está nas INFORMAÇÕES DA CASA nem na agenda (atração/tipo de música de um dia, valores que você não tem...) → NÃO invente NADA e NÃO prometa "verificar"/"me dá um momento" (você não consegue voltar sozinho depois): responda o que sabe e chame chamar_atendente pro restante.
 PAGAMENTO ANTECIPADO/sinal/caução: não trabalhamos com pagamento antecipado — o pagamento é no local, após o consumo. Diga isso e chame chamar_atendente NA HORA (a conversa é transferida pra um humano continuar).
+CARDÁPIO (QA Giovana 03/08): se o cliente pedir cardápio/menu/pratos/preços de comida, chame a ferramenta enviar_cardapio — o PDF chega direto no chat. PROIBIDO inventar, chutar ou montar QUALQUER link/URL (de cardápio ou de outra coisa): você NÃO tem nenhum link além dos que as ferramentas mandam sozinhas.
 
 ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}${futuras.length ? `RESERVA JÁ ATIVA neste número: ${futTxt} (o dia da semana informado aí é o CORRETO — não recalcule). Se a mensagem for dúvida/assunto sobre essa reserva (horário, convidados, mudança...), responda SOBRE ELA — NÃO trate como reserva nova e NÃO fique empurrando o cliente a reservar de novo. Pra alterar ou cancelar, oriente a responder "atendente".\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
   const tools = [
@@ -263,6 +264,8 @@ ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nasc
     { name: 'criar_reserva', description: 'Cria a reserva. Só quando o cliente confirmar.', input_schema: { type: 'object', properties: { nome: { type: 'string' }, data: { type: 'string' }, hora: { type: 'string' }, pessoas: { type: 'integer' }, setor: { type: 'string' }, nascimento: { type: 'string', description: 'data de nascimento AAAA-MM-DD (obrigatória)' } }, required: ['nome', 'data', 'pessoas', 'setor', 'nascimento'] } },
     // QA Giovana 30/07: transferência NA HORA (não só "responda atendente")
     { name: 'chamar_atendente', description: 'Transfere a conversa AGORA pra um atendente humano. Use quando: o cliente pedir pagamento antecipado/sinal, quiser a programação musical exata de um dia, pedir uma pessoa, ou você não tiver a informação.', input_schema: { type: 'object', properties: { motivo: { type: 'string' } }, required: [] } },
+    // QA Giovana 03/08: agente inventava link de cardápio — agora manda o PDF de verdade
+    { name: 'enviar_cardapio', description: 'Envia o PDF do cardápio completo da casa direto no chat. Use SEMPRE que o cliente pedir cardápio, menu, pratos ou preços de comida. NUNCA invente links de cardápio.', input_schema: { type: 'object', properties: {}, required: [] } },
   ]
   return claudeLoop(system, tools, history, async (name, inp) => {
     if (name === 'consultar_disponibilidade') return consultarDisponibilidade(casa, inp)
@@ -271,6 +274,10 @@ ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nasc
       await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true, flyer_etapa: null, flyer_feedback: false })
       await avisarGerente(casa, from, `precisa de atendimento humano${inp?.motivo ? ' — ' + String(inp.motivo).slice(0, 80) : ''}`)
       return { ok: true, transferido: true, instrucao: 'Conversa transferida. Avise o cliente que um atendente humano do bar continua a conversa por aqui em instantes.' }
+    }
+    if (name === 'enviar_cardapio') {
+      const ok = await enviarPdfCardapio(casa, from)
+      return ok ? { ok: true, instrucao: 'O PDF do cardápio ACABOU de ser enviado no chat. Só confirme ao cliente que o cardápio chegou — NÃO mande nenhum link.' } : { ok: false, instrucao: 'Cardápio não cadastrado pra esta casa — chame chamar_atendente.' }
     }
     return { erro: 'desconhecida' }
   })
@@ -407,7 +414,9 @@ async function buscarCep(cep) {
 }
 async function enviarPdfCardapio(casa, from) {
   const cc = (await sb.from('casas').select('cardapio_url').eq('id', casa.id).maybeSingle()).data
-  if (cc?.cardapio_url) await enviarDocumento(from, cc.cardapio_url, 'Cardapio-Botequim.pdf', '📜 Aqui está o nosso cardápio completo! Ficou com alguma dúvida? 😊')
+  if (!cc?.cardapio_url) return false
+  await enviarDocumento(from, cc.cardapio_url, 'Cardapio-Botequim.pdf', '📜 Aqui está o nosso cardápio completo! Ficou com alguma dúvida? 😊')
+  return true
 }
 async function calcularEntrega(casa, from, endereco) {
   const cfg = (await sb.from('delivery_config').select('*').eq('casa_id', casa.id).maybeSingle()).data
