@@ -40,48 +40,45 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } })
 
-// ===================== ENVIO (Evolution) =====================
-let lastEvoErr = null // último erro da Evolution (status+body) — p/ o sweep saber se é falha DEFINITIVA
-async function evoPost(path, payload) {
-  try {
-    const r = await fetch(`${EVOLUTION_URL}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: MASTER_KEY },
-      body: JSON.stringify(payload),
-    })
-    if (!r.ok) {
-      const body = (await r.text().catch(() => '')).slice(0, 200)
-      lastEvoErr = { status: r.status, body }
-      console.error(`  ⚠️ ${path} ${r.status}`, body)
-      return null
-    }
-    lastEvoErr = null
-    return await r.json().catch(() => ({}))
-  } catch (e) { lastEvoErr = { status: 0, body: e.message }; console.error(`  ⚠️ ${path} exc`, e.message); return null }
-}
-// número sem WhatsApp (exists:false) = falha DEFINITIVA — retentar a cada 5min nunca vai funcionar
-function numSemWhatsApp() { return !!(lastEvoErr && lastEvoErr.status === 400 && lastEvoErr.body.includes('"exists":false')) }
+// ===================== ENVIO (fila rv_fila → rv-agent no PC do escritório) =====================
+// Arquitetura 30/07/2026 — mesmo esquema do ZeroBobina: a Evolution MORREU.
+// A sessão do WhatsApp roda em Baileys puro no PC do escritório (rv-agent).
+// Envio = insere na fila rv_fila (Supabase); o agente puxa /rv/fila e manda.
+// O agente SÓ puxa a fila da casa com envio LIGADO no painel local — item espera, não se perde.
+let lastEvoErr = null // mantido pela assinatura antiga; erro agora = falha ao ENFILEIRAR
+// número sem WhatsApp: o agente descobre só na hora do envio — pro sweep, enfileirado = ok
+function numSemWhatsApp() { return false }
 // telefone digitado à mão no painel pode vir "(11) 94544-7227" ou sem o 55 — normaliza ANTES de enviar
-// (send com 11945447227 deu exists:false no log de 24/07)
 function normNum(n) { let d = String(n || '').replace(/\D/g, ''); if (d.length >= 10 && d.length <= 11 && !d.startsWith('55')) d = '55' + d; return d }
+async function logMensagem(instance, numero, minha, texto) {
+  try { await sb.from('wa_mensagens').insert({ instance, numero, minha, texto: String(texto || '').slice(0, 2000) }) }
+  catch (e) { console.error('wa_mensagens', e.message) }
+}
+async function enfileirar(tipo, numero, payload) {
+  const num = normNum(numero)
+  const { error } = await sb.from('rv_fila').insert({ instance: curInst(), tipo, numero: num, payload })
+  if (error) { lastEvoErr = { status: 500, body: error.message }; console.error(`  ⚠️ fila ${tipo}`, error.message); return null }
+  lastEvoErr = null
+  logMensagem(curInst(), num, true, payload.text || payload.caption || `[${tipo}]`)
+  return { queued: true }
+}
 async function sendText(numero, texto) {
-  return evoPost(`/message/sendText/${curInst()}`, { number: normNum(numero), text: texto, delay: rand(1500, 3500) })
+  return enfileirar('text', numero, { text: texto, delay: rand(1500, 3500) })
 }
 async function enviarImagemLink(numero, url, caption) {
-  return evoPost(`/message/sendMedia/${curInst()}`, { number: normNum(numero), mediatype: 'image', media: url, caption: caption || '' })
+  return enfileirar('imagem_url', numero, { media: url, caption: caption || '' })
 }
 async function enviarImagemB64(numero, b64, caption) {
-  return evoPost(`/message/sendMedia/${curInst()}`, { number: normNum(numero), mediatype: 'image', mimetype: 'image/png', media: b64, caption: caption || '', fileName: 'flyer.png' })
+  return enfileirar('imagem_b64', numero, { media: b64, caption: caption || '', fileName: 'flyer.png' })
 }
 async function enviarDocumento(numero, url, filename, caption) {
-  return evoPost(`/message/sendMedia/${curInst()}`, { number: normNum(numero), mediatype: 'document', media: url, fileName: filename, caption: caption || '' })
+  return enfileirar('documento', numero, { media: url, fileName: filename, caption: caption || '' })
 }
-// baixa base64 de uma midia recebida (selfie do flyer)
+// mídia recebida (selfie do flyer): o rv-agent baixa no PC (só ele tem as chaves
+// da sessão) e manda o base64 DENTRO do webhook (data.__b64)
 async function baixarMidiaB64(dataMsg) {
-  try {
-    const r = await evoPost(`/chat/getBase64FromMediaMessage/${curInst()}`, { message: { key: dataMsg.key, message: dataMsg.message }, convertToMp4: false })
-    if (r?.base64) return { b64: r.base64, mime: r.mimetype || 'image/jpeg' }
-  } catch (e) { console.error('baixarMidia', e.message) }
+  if (dataMsg?.__b64) return { b64: dataMsg.__b64, mime: dataMsg.__mime || 'image/jpeg' }
+  console.error('baixarMidia: webhook veio sem __b64 (agente não baixou a mídia)')
   return null
 }
 
@@ -252,17 +249,26 @@ HORÁRIOS exatos do dia podem variar (evento/lotação) — antes de fechar rese
 ${dcfg?.endereco ? `ENDEREÇO da casa: ${dcfg.endereco}. Quando perguntarem onde fica, responda EXATAMENTE este endereço — PROIBIDO inventar rua ou número.` : 'ENDEREÇO: você NÃO tem o endereço cadastrado — se perguntarem, diga que o atendente confirma (responda "atendente") e NUNCA invente.'}
 HORÁRIO FORA DA LISTA: se o cliente pedir um horário depois do último da lista, NÃO diga que "não está disponível" — explique que naquele dia pegamos reservas só até o ÚLTIMO horário da lista (diga qual é) e ofereça esse último horário.
 Se vier "horarios_por_setor", esses horários extras valem SÓ para o setor indicado — deixe isso claro ao oferecer.
-Se vier "aviso", transmita o texto ao cliente UMA vez quando a reserva/consulta cair na janela indicada.
+Se vier "aviso" (ex.: promoção de almoço), mencione UMA vez em TODA reserva, mas ADAPTE ao horário (QA Giovana 30/07): reserva/consulta DENTRO da janela do aviso = sugestão direta ("ótima pedida para o seu horário"); reserva FORA da janela (jantar, fim de semana) = só curiosidade, no formato "Você sabia que de segunda a sexta, das 12h às 15h, temos [o aviso]? Fica o convite!" — NUNCA diga que é "ótima pedida para o seu horário" quando a reserva não cai na janela.
 EVENTOS: se vier "evento", avise com entusiasmo (título, descrição, menu/preço).
-${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}
+${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}SEM RESPOSTA: dúvida que NÃO está nas INFORMAÇÕES DA CASA nem na agenda (atração/tipo de música de um dia, valores que você não tem...) → NÃO invente NADA e NÃO prometa "verificar"/"me dá um momento" (você não consegue voltar sozinho depois): responda o que sabe e chame chamar_atendente pro restante.
+PAGAMENTO ANTECIPADO/sinal/caução: não trabalhamos com pagamento antecipado — o pagamento é no local, após o consumo. Diga isso e chame chamar_atendente NA HORA (a conversa é transferida pra um humano continuar).
+
 ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}${futuras.length ? `RESERVA JÁ ATIVA neste número: ${futTxt} (o dia da semana informado aí é o CORRETO — não recalcule). Se a mensagem for dúvida/assunto sobre essa reserva (horário, convidados, mudança...), responda SOBRE ELA — NÃO trate como reserva nova e NÃO fique empurrando o cliente a reservar de novo. Pra alterar ou cancelar, oriente a responder "atendente".\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
   const tools = [
     { name: 'consultar_disponibilidade', description: 'Verifica data aberta e setores que comportam as pessoas.', input_schema: { type: 'object', properties: { data: { type: 'string' }, pessoas: { type: 'integer' } }, required: ['data', 'pessoas'] } },
     { name: 'criar_reserva', description: 'Cria a reserva. Só quando o cliente confirmar.', input_schema: { type: 'object', properties: { nome: { type: 'string' }, data: { type: 'string' }, hora: { type: 'string' }, pessoas: { type: 'integer' }, setor: { type: 'string' }, nascimento: { type: 'string', description: 'data de nascimento AAAA-MM-DD (obrigatória)' } }, required: ['nome', 'data', 'pessoas', 'setor', 'nascimento'] } },
+    // QA Giovana 30/07: transferência NA HORA (não só "responda atendente")
+    { name: 'chamar_atendente', description: 'Transfere a conversa AGORA pra um atendente humano. Use quando: o cliente pedir pagamento antecipado/sinal, quiser a programação musical exata de um dia, pedir uma pessoa, ou você não tiver a informação.', input_schema: { type: 'object', properties: { motivo: { type: 'string' } }, required: [] } },
   ]
   return claudeLoop(system, tools, history, async (name, inp) => {
     if (name === 'consultar_disponibilidade') return consultarDisponibilidade(casa, inp)
     if (name === 'criar_reserva') return criarReserva(casa, from, inp)
+    if (name === 'chamar_atendente') {
+      await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true, flyer_etapa: null, flyer_feedback: false })
+      await avisarGerente(casa, from, `precisa de atendimento humano${inp?.motivo ? ' — ' + String(inp.motivo).slice(0, 80) : ''}`)
+      return { ok: true, transferido: true, instrucao: 'Conversa transferida. Avise o cliente que um atendente humano do bar continua a conversa por aqui em instantes.' }
+    }
     return { erro: 'desconhecida' }
   })
 }
@@ -396,7 +402,7 @@ async function buscarCep(cep) {
 }
 async function enviarPdfCardapio(casa, from) {
   const cc = (await sb.from('casas').select('cardapio_url').eq('id', casa.id).maybeSingle()).data
-  if (cc?.cardapio_url) await enviarDocumento(from, cc.cardapio_url, 'Cardapio-Botequim.pdf', '📜 Nosso cardápio completo! Me diz o que vai querer 😋\n\n📸 Quer ver algum prato? Peça "foto do [prato]".')
+  if (cc?.cardapio_url) await enviarDocumento(from, cc.cardapio_url, 'Cardapio-Botequim.pdf', '📜 Aqui está o nosso cardápio completo! Ficou com alguma dúvida? 😊')
 }
 async function calcularEntrega(casa, from, endereco) {
   const cfg = (await sb.from('delivery_config').select('*').eq('casa_id', casa.id).maybeSingle()).data
@@ -534,16 +540,17 @@ async function casasPermitidas(user) {
   return (rows.data ?? []).map((r) => r.casa_id)
 }
 const podeCasa = (perm, casa_id) => perm === 'all' || perm.includes(casa_id)
-async function evoAdmin(method, path) {
-  try {
-    const r = await fetch(`${EVOLUTION_URL}${path}`, { method, headers: { apikey: MASTER_KEY } })
-    if (!r.ok) return { _erro: `${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}` }
-    return await r.json().catch(() => ({}))
-  } catch (e) { return { _erro: e.message } }
-}
+// estado das sessões vem do HEARTBEAT do rv-agent (a Evolution morreu 30/07).
+// listaInstancias devolve o MESMO formato da Evolution — o painel não muda.
+let agentStatus = { recebido: 0, sessoes: [] }
 async function listaInstancias() {
-  const r = await evoAdmin('GET', '/instance/fetchInstances')
-  return Array.isArray(r) ? r : (r && r.name ? [r] : [])
+  const vivo = Date.now() - (agentStatus.recebido || 0) < 90000 // 3 heartbeats perdidos = agente morto
+  return (agentStatus.sessoes || []).map((s) => ({
+    name: s.instance,
+    connectionStatus: vivo ? s.estado : 'agente sem contato',
+    ownerJid: s.numero ? `${s.numero}@s.whatsapp.net` : null,
+    profileName: null, profilePicUrl: null, _count: {},
+  }))
 }
 
 // status do WhatsApp de cada unidade (pro ⚙️ do tablet)
@@ -576,31 +583,18 @@ app.get('/painel/monitor', async (req, res) => {
     contatos: x._count?.Contact ?? null, mensagens: x._count?.Message ?? null })) })
 })
 
-// gera QR pra conectar o WhatsApp da unidade (cria a instância se não existir)
+// pareamento MUDOU DE CASA (30/07): a sessão roda no PC do escritório (rv-agent).
+// Se já está conectado, mostra; senão orienta a parear no painel local.
 app.post('/painel/qr', async (req, res) => {
   const u = await exigeLogin(req, res); if (!u) return
-  const { casa_id, force, refresh } = req.body || {}
+  const { casa_id } = req.body || {}
   if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
   const c = (await sb.from('casas').select('id,nome,slug').eq('id', casa_id).maybeSingle()).data
   if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
   const inst = instDaCasa(c.slug)
   const existe = (await listaInstancias()).find((x) => x.name === inst)
-  if (!existe) {
-    try {
-      const cr = await fetch(`${EVOLUTION_URL}/instance/create`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: MASTER_KEY },
-        body: JSON.stringify({ instanceName: inst, integration: 'WHATSAPP-BAILEYS', qrcode: false,
-          webhook: { url: `${ROBOT_URL}/webhook`, byEvents: false, base64: false, headers: { 'x-webhook-secret': WEBHOOK_SECRET }, events: ['MESSAGES_UPSERT'] } }) })
-      if (!cr.ok) return res.json({ ok: false, erro: `Criar instância falhou: ${cr.status} ${(await cr.text()).slice(0, 200)}` })
-    } catch (e) { return res.json({ ok: false, erro: 'Criar instância: ' + e.message }) }
-  } else if (existe.connectionStatus === 'open' && !force) {
-    return res.json({ ok: true, conectado: true, numero: existe.ownerJid ? '+' + existe.ownerJid.split('@')[0] : null })
-  } else if (!refresh) {
-    await evoAdmin('DELETE', `/instance/logout/${inst}`) // sessão velha trava o pareamento novo
-  }
-  const conn = await evoAdmin('GET', `/instance/connect/${inst}`)
-  const b64 = conn?.base64 || conn?.qrcode?.base64
-  if (!b64) return res.json({ ok: false, erro: 'Evolution não devolveu QR: ' + JSON.stringify(conn).slice(0, 200) })
-  res.json({ ok: true, conectado: false, qr: b64, pairingCode: conn?.pairingCode || null })
+  if (existe?.connectionStatus === 'open') return res.json({ ok: true, conectado: true, numero: existe.ownerJid ? '+' + existe.ownerJid.split('@')[0] : null })
+  res.json({ ok: false, erro: 'O WhatsApp desta casa agora conecta no PC do escritório (painel local do rv-agent). Fale com o Lucas pra escanear o QR por lá.' })
 })
 
 // ---- Conversas estilo WhatsApp Web (QA Giovana 24/07): lista TODOS os chats do número direto da Evolution ----
@@ -619,27 +613,15 @@ app.post('/painel/chats', async (req, res) => {
   if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
   const c = (await sb.from('casas').select('id,slug').eq('id', casa_id).maybeSingle()).data
   if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
-  const r = await evoPost(`/chat/findChats/${instDaCasa(c.slug)}`, {})
-  // WhatsApp novo divide a conversa em DUAS metades: enviadas ficam no chat <numero>@s.whatsapp.net e
-  // recebidas num chat <lid>@lid (bug "só aparecem as minhas mensagens" — Giovana 24/07). O remoteJidAlt
-  // da última mensagem do chat @lid aponta o número real → aqui a gente FUNDE as duas metades.
+  // histórico agora mora em wa_mensagens (o robô grava inbound + outbound;
+  // a Evolution, que guardava isso, morreu 30/07). Nome vem de conversas.
+  const inst = instDaCasa(c.slug)
+  const msgs = (await sb.from('wa_mensagens').select('numero,minha,texto,ts').eq('instance', inst).order('ts', { ascending: false }).limit(800)).data ?? []
+  const nomes = {}
+  for (const cv of (await sb.from('conversas').select('telefone,nome').eq('casa_id', casa_id)).data ?? []) nomes[cv.telefone] = cv.nome
   const porNum = {}
-  for (const x of (Array.isArray(r) ? r : [])) {
-    const jid = String(x.remoteJid || '')
-    let pn = null
-    if (jid.endsWith('@s.whatsapp.net')) pn = jid
-    else if (jid.endsWith('@lid')) pn = x.lastMessage?.key?.remoteJidAlt || null
-    if (!pn || !String(pn).endsWith('@s.whatsapp.net')) continue
-    const numero = String(pn).split('@')[0]
-    const info = { nome: x.pushName || null, foto: x.profilePicUrl || null, atualizado: x.updatedAt || null,
-      nao_lidas: x.unreadCount || 0, ultima: resumoMsg(x.lastMessage?.message, x.lastMessage?.messageType), ultima_minha: !!x.lastMessage?.key?.fromMe }
-    const ex = porNum[numero]
-    if (!ex) porNum[numero] = { numero, ...info }
-    else {
-      ex.nome = ex.nome || info.nome; ex.foto = ex.foto || info.foto
-      ex.nao_lidas = (ex.nao_lidas || 0) + (info.nao_lidas || 0)
-      if (String(info.atualizado || '') > String(ex.atualizado || '')) { ex.atualizado = info.atualizado; ex.ultima = info.ultima; ex.ultima_minha = info.ultima_minha }
-    }
+  for (const m of msgs) {
+    if (!porNum[m.numero]) porNum[m.numero] = { numero: m.numero, nome: nomes[m.numero] || null, foto: null, atualizado: m.ts, nao_lidas: 0, ultima: m.texto, ultima_minha: !!m.minha }
   }
   const chats = Object.values(porNum).sort((a, b) => String(b.atualizado || '').localeCompare(String(a.atualizado || '')))
   res.json({ ok: true, chats })
@@ -651,19 +633,13 @@ app.post('/painel/msgs', async (req, res) => {
   if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
   const c = (await sb.from('casas').select('id,slug').eq('id', casa_id).maybeSingle()).data
   if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
-  // busca as DUAS metades da conversa: remoteJid = numero (enviadas) + remoteJidAlt = numero (chat @lid, recebidas)
-  const pnJid = `${String(numero).replace(/\D/g, '')}@s.whatsapp.net`
+  // histórico agora mora em wa_mensagens (30/07) — sem metades @lid: o rv-agent
+  // já entrega o número real de todo mundo
+  const num = String(numero).replace(/\D/g, '')
   const lim = Math.min(Number(limit) || 100, 300)
   const inst = instDaCasa(c.slug)
-  const [r1, r2] = await Promise.all([
-    evoPost(`/chat/findMessages/${inst}`, { where: { key: { remoteJid: pnJid } }, limit: lim }),
-    evoPost(`/chat/findMessages/${inst}`, { where: { key: { remoteJidAlt: pnJid } }, limit: lim }),
-  ])
-  const recs = [...(r1?.messages?.records ?? []), ...(r2?.messages?.records ?? [])]
-  const vistos = new Set()
-  const msgs = recs.filter((m) => { const id = m.key?.id; if (id && vistos.has(id)) return false; if (id) vistos.add(id); return true })
-    .map((m) => ({ minha: !!m.key?.fromMe, t: Number(m.messageTimestamp) * 1000, texto: resumoMsg(m.message, m.messageType) || '[mensagem]' }))
-    .sort((a, b) => a.t - b.t)
+  const recs = (await sb.from('wa_mensagens').select('minha,texto,ts').eq('instance', inst).eq('numero', num).order('ts', { ascending: false }).limit(lim)).data ?? []
+  const msgs = recs.map((m) => ({ minha: !!m.minha, t: new Date(m.ts).getTime(), texto: m.texto || '[mensagem]' })).sort((a, b) => a.t - b.t)
   res.json({ ok: true, msgs })
 })
 
@@ -850,7 +826,34 @@ function jaProcessada(id) {
   return false
 }
 
-app.get('/', (_req, res) => res.json({ ok: true, robo: 'botequim', multi: Object.keys(CASA_MAP).length || 0 }))
+app.get('/', (_req, res) => res.json({ ok: true, robo: 'botequim', multi: Object.keys(CASA_MAP).length || 0, agente: (Date.now() - (agentStatus.recebido || 0) < 90000) ? 'vivo' : 'sem contato' }))
+
+// ===================== PONTE COM O RV-AGENT (PC do escritório, 30/07) =====================
+function authAgent(req, res) {
+  const ok = !WEBHOOK_SECRET || req.headers['x-webhook-secret'] === WEBHOOK_SECRET || req.query.s === WEBHOOK_SECRET
+  if (!ok) { res.sendStatus(401); return false }
+  return true
+}
+// o agente pede SÓ as casas com envio ligado — o resto fica esperando na fila
+app.get('/rv/fila', async (req, res) => {
+  if (!authAgent(req, res)) return
+  const insts = String(req.query.insts || '').split(',').filter(Boolean)
+  if (!insts.length) return res.json({ itens: [] })
+  const { data, error } = await sb.from('rv_fila').select('*').is('enviado_em', null).in('instance', insts).order('criado_em', { ascending: true }).limit(30)
+  if (error) return res.status(500).json({ erro: error.message })
+  res.json({ itens: data ?? [] })
+})
+app.post('/rv/fila/ack', async (req, res) => {
+  if (!authAgent(req, res)) return
+  const ids = (req.body?.ids || []).map(Number).filter(Boolean)
+  if (ids.length) await sb.from('rv_fila').update({ enviado_em: new Date().toISOString() }).in('id', ids)
+  res.json({ ok: true, n: ids.length })
+})
+app.post('/rv/agent-status', (req, res) => {
+  if (!authAgent(req, res)) return
+  agentStatus = { ...req.body, recebido: Date.now() }
+  res.json({ ok: true })
+})
 
 app.post('/webhook', async (req, res) => {
   if (WEBHOOK_SECRET && req.headers['x-webhook-secret'] !== WEBHOOK_SECRET) return res.sendStatus(401)
@@ -870,6 +873,7 @@ async function processarMensagem(body) {
     const isImage = !!d.message?.imageMessage
     const texto = extrairTexto(d.message)
     console.log(`💬 ${d.pushName || from}: ${isImage ? '[imagem] ' : ''}${texto || ''}`)
+    logMensagem(body.instance || INSTANCE, from, false, texto || (isImage ? '📷 Foto' : '[mensagem]'))
 
     // instância mapeada no CASA_MAP OU instância com nome = slug da casa; fallback = CASA_SLUG
     let casa = await getCasa(CASA_MAP[body.instance] || body.instance)
