@@ -255,7 +255,7 @@ Se vier "horarios_por_setor", esses horários extras valem SÓ para o setor indi
 Se vier "aviso" (ex.: promoção de almoço), mencione UMA vez em TODA reserva, mas ADAPTE ao horário (QA Giovana 30/07): reserva/consulta DENTRO da janela do aviso = sugestão direta ("ótima pedida para o seu horário"); reserva FORA da janela (jantar, fim de semana) = só curiosidade, no formato "Você sabia que de segunda a sexta, das 12h às 15h, temos [o aviso]? Fica o convite!" — NUNCA diga que é "ótima pedida para o seu horário" quando a reserva não cai na janela.
 EVENTOS: se vier "evento", avise com entusiasmo (título, descrição, menu/preço).
 ${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}SEM RESPOSTA: dúvida que NÃO está nas INFORMAÇÕES DA CASA nem na agenda (atração/tipo de música de um dia, valores que você não tem...) → NÃO invente NADA e NÃO prometa "verificar"/"me dá um momento" (você não consegue voltar sozinho depois): responda o que sabe e chame chamar_atendente pro restante.
-PAGAMENTO ANTECIPADO/sinal/caução: não trabalhamos com pagamento antecipado — o pagamento é no local, após o consumo. Diga isso e chame chamar_atendente NA HORA (a conversa é transferida pra um humano continuar).
+PAGAMENTO ANTECIPADO/sinal/caução (Lucas 03/08): responda que SIM, conseguimos atender — NUNCA diga que "não trabalhamos com isso". Diga que essa parte quem cuida é um atendente humano e que você vai passar a conversa AGORA pra ele, e chame chamar_atendente na mesma hora.
 CARDÁPIO (QA Giovana 03/08): se o cliente pedir cardápio/menu/pratos/preços de comida, chame a ferramenta enviar_cardapio — o PDF chega direto no chat. PROIBIDO inventar, chutar ou montar QUALQUER link/URL (de cardápio ou de outra coisa): você NÃO tem nenhum link além dos que as ferramentas mandam sozinhas.
 
 ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}${futuras.length ? `RESERVA JÁ ATIVA neste número: ${futTxt} (o dia da semana informado aí é o CORRETO — não recalcule). Se a mensagem for dúvida/assunto sobre essa reserva (horário, convidados, mudança...), responda SOBRE ELA — NÃO trate como reserva nova e NÃO fique empurrando o cliente a reservar de novo. Pra alterar ou cancelar, oriente a responder "atendente".\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
@@ -901,8 +901,22 @@ async function processarMensagem(body) {
 
     // humano assumiu
     if (conv.handoff) {
-      if (texto.trim()) { const h = Array.isArray(conv.historico) ? conv.historico : []; h.push({ role: 'user', content: texto }); await upConversa(casa.id, from, { historico: h }) }
-      return
+      // Expiração do handoff (Lucas 03/08): se NINGUÉM nosso respondeu em 30 min (relógio = última
+      // msg minha no wa_mensagens — a própria transferência ou a resposta do atendente pelo painel),
+      // o robô reassume em vez de deixar o cliente no vácuo. "Devolver ao robô" do painel segue valendo.
+      let reassume = false
+      if (conv.handoff_aguardando !== false) {
+        const ult = (await sb.from('wa_mensagens').select('ts').eq('instance', body.instance || INSTANCE).eq('numero', from).eq('minha', true).order('ts', { ascending: false }).limit(1).maybeSingle()).data
+        reassume = !ult?.ts || (Date.now() - new Date(ult.ts).getTime() > 30 * 60 * 1000)
+      }
+      if (!reassume) {
+        if (texto.trim()) { const h = Array.isArray(conv.historico) ? conv.historico : []; h.push({ role: 'user', content: texto }); await upConversa(casa.id, from, { historico: h }) }
+        return
+      }
+      await upConversa(casa.id, from, { handoff: false, handoff_aguardando: false })
+      conv.handoff = false
+      await sendText(from, 'Desculpa a demora — nosso atendente não conseguiu te responder por aqui ainda 🙏 Posso continuar te ajudando 🙂')
+      // segue o fluxo normal com a mensagem atual
     }
 
     await sleep(rand(PRE_MIN, PRE_MAX)) // espera humana (nao digitar na hora)
