@@ -190,7 +190,7 @@ async function criarReserva(casa, from, input) {
   const { nome, data, hora, pessoas, setor, cpf, email, nascimento } = input
   if (pessoas > 49) {
     await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
-    await sendText(from, `Que ótimo, um grupo grande! 🎉 Como é bastante gente, fazemos um *atendimento personalizado*. O responsável do *${casa.nome}* já vai falar com você por aqui. 🙌`)
+    await sendText(from, `Que ótimo, um grupo grande! 🎉 Como é bastante gente, fazemos um *atendimento personalizado*. O responsável do *${casa.nome}* já vai falar com você por aqui. 🙌\n\n${await avisoAtendimentoHumano(casa.id)}`)
     await avisarGerente(casa, from, `quer reservar para ${pessoas} pessoas (GRUPO GRANDE +49)`)
     return { ok: false, grupo_grande: true, mensagem: 'Handoff grupo grande. NÃO confirme.' }
   }
@@ -273,7 +273,7 @@ ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nasc
     if (name === 'chamar_atendente') {
       await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true, flyer_etapa: null, flyer_feedback: false })
       await avisarGerente(casa, from, `precisa de atendimento humano${inp?.motivo ? ' — ' + String(inp.motivo).slice(0, 80) : ''}`)
-      return { ok: true, transferido: true, instrucao: 'Conversa transferida. Avise o cliente que um atendente humano do bar continua a conversa por aqui em instantes.' }
+      return { ok: true, transferido: true, instrucao: `Conversa transferida. Avise o cliente que um atendente humano do bar continua a conversa por aqui e INCLUA este aviso de horário (pode adaptar de leve, PROIBIDO inventar horários): "${await avisoAtendimentoHumano(casa.id)}"` }
     }
     if (name === 'enviar_cardapio') {
       const ok = await enviarPdfCardapio(casa, from)
@@ -411,6 +411,16 @@ function distKm(a, b) { const R = 6371, toR = (x) => x * Math.PI / 180; const dL
 async function buscarCep(cep) {
   const c = String(cep || '').replace(/\D/g, ''); if (c.length !== 8) return { ok: false, erro: 'CEP precisa ter 8 dígitos.' }
   try { const d = await (await fetch(`https://viacep.com.br/ws/${c}/json/`)).json(); if (d?.erro) return { ok: false, erro: 'CEP não encontrado.' }; return { ok: true, cep: c, logradouro: d.logradouro, bairro: d.bairro, cidade: d.localidade, uf: d.uf } } catch (_) { return { ok: false, erro: 'Não consegui consultar o CEP.' } }
+}
+// Lucas 03/08: ao transferir pro humano, avisar o horário do atendimento (= funcionamento da casa)
+// pro cliente não esperar resposta imediata fora do horário (ex.: segunda à noite). Horário vem de
+// casa_infos aprovada com "horário" no título (cadastrar na aba 🧠 IA do tablet); sem cadastro = aviso genérico.
+async function avisoAtendimentoHumano(casaId) {
+  const r = (await sb.from('casa_infos').select('titulo,texto').eq('casa_id', casaId).eq('status', 'aprovado').ilike('titulo', '%hor%rio%')).data ?? []
+  const h = r.find((i) => /atendimento|funcionamento/i.test(i.titulo)) || r[0]
+  return h
+    ? `🕐 Nosso atendimento humano funciona no horário de funcionamento da casa: ${h.texto} Se você mandou mensagem fora desse horário, respondemos assim que o atendimento abrir 🙏`
+    : '🕐 Nosso atendimento humano responde dentro do horário de funcionamento da casa — se você mandou mensagem fora desse horário, respondemos assim que o atendimento abrir 🙏'
 }
 async function enviarPdfCardapio(casa, from) {
   const cc = (await sb.from('casas').select('cardapio_url').eq('id', casa.id).maybeSingle()).data
@@ -962,7 +972,7 @@ async function processarMensagem(body) {
     // intentDoTexto ('6' etc.) só vale quando estamos no menu; senão "6 pessoas" viraria handoff
     if (/atendente|humano|especialista|pessoa de verdade|falar com (algu[eé]m|uma pessoa|um humano|a gente|gerente)/i.test(texto) || (conv.aguardando === 'menu' && intentDoTexto(texto) === 'atendente')) {
       await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true, flyer_etapa: null, flyer_feedback: false })
-      await sendText(from, `Claro! 🙂 Só um instante — um atendente do *${casa.nome}* vai continuar por aqui. Pode escrever sua mensagem.`)
+      await sendText(from, `Claro! 🙂 Só um instante — um atendente do *${casa.nome}* vai continuar por aqui. Pode escrever sua mensagem.\n\n${await avisoAtendimentoHumano(casa.id)}`)
       await avisarGerente(casa, from, 'pediu para falar com um atendente'); return
     }
 
