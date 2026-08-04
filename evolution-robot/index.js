@@ -636,7 +636,7 @@ app.post('/painel/qr', async (req, res) => {
   const inst = instDaCasa(c.slug)
   const existe = (await listaInstancias()).find((x) => x.name === inst)
   if (existe?.connectionStatus === 'open') return res.json({ ok: true, conectado: true, numero: existe.ownerJid ? '+' + existe.ownerJid.split('@')[0] : null })
-  res.json({ ok: false, erro: 'O WhatsApp desta casa agora conecta no PC do escritório (painel local do rv-agent). Fale com o Lucas pra escanear o QR por lá.' })
+  res.json({ ok: false, erro: 'Esta unidade caiu do WhatsApp. Avise o escritório central pra reconectar.' })
 })
 
 // ---- Conversas estilo WhatsApp Web (QA Giovana 24/07): lista TODOS os chats do número direto da Evolution ----
