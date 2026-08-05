@@ -200,6 +200,14 @@ async function consultarDisponibilidade(casa, input) {
 }
 async function criarReserva(casa, from, input) {
   const { nome, data, hora, pessoas, setor, cpf, email, nascimento } = input
+  // Dia dos Pais (pedido Giovana/Lucas 05/08): TODA reserva pra 09/08, em qualquer horário e
+  // qualquer unidade, vira atendimento humano — data é travada, ninguém confirma sozinho pelo robô.
+  if (data === '2026-08-09') {
+    await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
+    await sendText(from, `Que ótimo, Dia dos Pais! 🎉 Pra esse dia a gente confirma certinho com um atendente, pra garantir tudo direitinho. Já vou te transferir. 🙌\n\n${await avisoAtendimentoHumano(casa.id)}`)
+    await avisarGerente(casa, from, `quer reservar para o DIA DOS PAIS (09/08) — atendimento manual obrigatório`)
+    return { ok: false, dia_dos_pais: true, mensagem: 'Dia dos Pais (09/08): reserva travada, transferida pro atendente. NÃO confirme nem diga que está garantida.' }
+  }
   if (pessoas > 49) {
     await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
     await sendText(from, `Que ótimo, um grupo grande! 🎉 Como é bastante gente, fazemos um *atendimento personalizado*. O responsável do *${casa.nome}* já vai falar com você por aqui. 🙌\n\n${await avisoAtendimentoHumano(casa.id)}`)
@@ -268,6 +276,7 @@ Se vier "aviso" (ex.: promoção de almoço), mencione UMA vez em TODA reserva, 
 EVENTOS: se vier "evento", avise com entusiasmo (título, descrição, menu/preço).
 ${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}SEM RESPOSTA: dúvida que NÃO está nas INFORMAÇÕES DA CASA nem na agenda (atração/tipo de música de um dia, valores que você não tem...) → NÃO invente NADA e NÃO prometa "verificar"/"me dá um momento" (você não consegue voltar sozinho depois): responda o que sabe e chame chamar_atendente pro restante.
 PAGAMENTO ANTECIPADO/sinal/caução (Lucas 03/08): responda que SIM, conseguimos atender — NUNCA diga que "não trabalhamos com isso". Diga que essa parte quem cuida é um atendente humano e que você vai passar a conversa AGORA pra ele, e chame chamar_atendente na mesma hora.
+DIA DOS PAIS (09/08/2026 — Giovana/Lucas 05/08): assim que perceber que a data pedida é 09/08, NÃO consulte disponibilidade nem peça mais dados — diga com entusiasmo que é Dia dos Pais e que um atendente confirma certinho, e chame chamar_atendente IMEDIATAMENTE.
 CARDÁPIO (QA Giovana 03/08): se o cliente pedir cardápio/menu/pratos/preços de comida, chame a ferramenta enviar_cardapio — o PDF chega direto no chat. PROIBIDO inventar, chutar ou montar QUALQUER link/URL (de cardápio ou de outra coisa): você NÃO tem nenhum link além dos que as ferramentas mandam sozinhas.
 
 ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}${futuras.length ? `RESERVA JÁ ATIVA neste número: ${futTxt} (o dia da semana informado aí é o CORRETO — não recalcule). Se a mensagem for dúvida/assunto sobre essa reserva (horário, convidados, mudança...), responda SOBRE ELA — NÃO trate como reserva nova e NÃO fique empurrando o cliente a reservar de novo. Pra alterar ou cancelar, oriente a responder "atendente".\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
