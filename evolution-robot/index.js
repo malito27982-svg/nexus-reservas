@@ -391,13 +391,27 @@ async function geminiLoop(system, tools, history, exec, maxIter = 5) {
   const contents = history.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(m.content) }] }))
   const followups = []
   for (let i = 0; i < maxIter; i++) {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: sysText }] }, contents, tools: [{ functionDeclarations: decls }],
-        generationConfig: { maxOutputTokens: 2048, thinkingConfig: { thinkingBudget: 0 } } }),
-    })
-    const data = await res.json()
-    if (data.error) throw new Error(`gemini ${data.error.code}: ${String(data.error.message).slice(0, 200)}`)
+    // Gemini sobrecarregado (503) engolia a mensagem em silêncio (visto 05/08: reserva da Sabrina
+    // nunca foi criada, sem link, sem aviso) — RETRY com backoff antes de desistir; se mesmo assim
+    // falhar, devolve texto pro cliente em vez de estourar exceção (o catch do webhook só logava).
+    let data
+    for (let tent = 0; tent < 3; tent++) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: sysText }] }, contents, tools: [{ functionDeclarations: decls }],
+          generationConfig: { maxOutputTokens: 2048, thinkingConfig: { thinkingBudget: 0 } } }),
+      }).catch((e) => ({ __neterro: e }))
+      if (res.__neterro) { data = { error: { code: 'network', message: res.__neterro.message } } }
+      else data = await res.json()
+      const retryable = data.error && (data.error.code === 503 || data.error.code === 'network' || data.error.code === 429)
+      if (!retryable) break
+      console.error(`gemini retry ${tent + 1}/3:`, data.error.code, String(data.error.message).slice(0, 120))
+      if (tent < 2) await sleep(1500 * (tent + 1))
+    }
+    if (data.error) {
+      console.error('gemini falhou após retries:', JSON.stringify(data.error).slice(0, 200))
+      return { text: 'Desculpa, tive uma instabilidade técnica agora 🙏 Pode mandar sua última mensagem de novo?', followups }
+    }
     const parts = data.candidates?.[0]?.content?.parts || []
     const calls = parts.filter((p) => p.functionCall)
     if (calls.length) {
@@ -585,6 +599,7 @@ const podeCasa = (perm, casa_id) => perm === 'all' || perm.includes(casa_id)
 // estado das sessões vem do HEARTBEAT do rv-agent (a Evolution morreu 30/07).
 // listaInstancias devolve o MESMO formato da Evolution — o painel não muda.
 let agentStatus = { recebido: 0, sessoes: [] }
+const qrRelay = {} // instance -> { qr, ts } | { conectado: true, numero, ts } — espelho do QR gerado no PC do escritório (04/08)
 async function listaInstancias() {
   const vivo = Date.now() - (agentStatus.recebido || 0) < 90000 // 3 heartbeats perdidos = agente morto
   return (agentStatus.sessoes || []).map((s) => ({
@@ -634,9 +649,10 @@ app.post('/painel/qr', async (req, res) => {
   const c = (await sb.from('casas').select('id,nome,slug').eq('id', casa_id).maybeSingle()).data
   if (!c) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
   const inst = instDaCasa(c.slug)
-  const existe = (await listaInstancias()).find((x) => x.name === inst)
-  if (existe?.connectionStatus === 'open') return res.json({ ok: true, conectado: true, numero: existe.ownerJid ? '+' + existe.ownerJid.split('@')[0] : null })
-  res.json({ ok: false, erro: 'Esta unidade caiu do WhatsApp. Avise o escritório central pra reconectar.' })
+  const r = qrRelay[inst]
+  if (r?.conectado) return res.json({ ok: true, conectado: true, numero: r.numero })
+  if (r?.qr && Date.now() - r.ts < 55000) return res.json({ ok: true, qr: r.qr })
+  res.json({ ok: false, erro: 'Gerando QR no escritório… aguarde uns segundos e toque em "Gerar novo QR" de novo.' })
 })
 
 // ---- Conversas estilo WhatsApp Web (QA Giovana 24/07): lista TODOS os chats do número direto da Evolution ----
@@ -897,6 +913,13 @@ app.post('/rv/fila/ack', async (req, res) => {
 app.post('/rv/agent-status', (req, res) => {
   if (!authAgent(req, res)) return
   agentStatus = { ...req.body, recebido: Date.now() }
+  res.json({ ok: true })
+})
+app.post('/rv/qr-push', (req, res) => {
+  if (!authAgent(req, res)) return
+  const { instance, qr, conectado, numero } = req.body || {}
+  if (!instance) return res.status(400).json({ ok: false })
+  qrRelay[instance] = conectado ? { conectado: true, numero, ts: Date.now() } : { qr, ts: Date.now() }
   res.json({ ok: true })
 })
 
@@ -1163,7 +1186,11 @@ async function processarMensagem(body) {
       await upConversa(casa.id, from, { saudou: true })
     }
     history.push({ role: 'user', content: texto })
-    const reply = await runAgent(casa, from, history, d.__origKey)
+    // rede de segurança (05/08): qualquer erro imprevisto no agente NÃO pode deixar o cliente sem
+    // resposta nenhuma — antes o catch do webhook só logava e a mensagem morria em silêncio.
+    let reply
+    try { reply = await runAgent(casa, from, history, d.__origKey) }
+    catch (e) { console.error('runAgent falhou:', e.message); reply = { text: 'Desculpa, tive uma instabilidade técnica agora 🙏 Pode mandar sua última mensagem de novo?', followups: [] } }
     if (reply.text) { history.push({ role: 'assistant', content: reply.text }); await sendText(from, reply.text) }
     for (const fu of reply.followups ?? []) { await sendText(from, fu); history.push({ role: 'assistant', content: fu }) }
     await upConversa(casa.id, from, { historico: history })
