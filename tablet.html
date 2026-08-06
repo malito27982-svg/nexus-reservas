@@ -408,6 +408,8 @@
       <button onclick="closeAtend()" style="background:var(--card2);min-width:auto;padding:8px 12px;">✕</button>
       <div style="min-width:0;"><div id="atTitle" style="font-weight:700;">—</div><div id="atStatus" style="font-size:13px;color:var(--muted);"></div></div>
       <div style="margin-left:auto;display:flex;gap:8px;flex-shrink:0;">
+        <button id="atRegistrar" onclick="registrarReserva()" style="background:#0891b2;color:#fff;font-weight:700;padding:10px 14px;">📋 Registrar Reserva</button>
+        <button id="atFlyer" onclick="abrirFlyerManual()" style="background:#f97316;color:#fff;font-weight:700;padding:10px 14px;">🎨 Gerar Flyer</button>
         <button id="atAssumir" onclick="assumir()" style="background:#7c3aed;color:#fff;font-weight:700;padding:10px 14px;">🙋 Assumir atendimento</button>
         <button id="atDevolver" onclick="devolver()" class="hidden" style="background:var(--card2);">🤖 Devolver ao robô</button>
       </div>
@@ -416,6 +418,27 @@
     <div style="display:flex;gap:8px;border-top:1px solid var(--line);padding-top:10px;">
       <input id="atInput" placeholder="Assuma o atendimento para responder…" style="flex:1;" disabled onkeydown="if(event.key==='Enter')enviarMsg()">
       <button id="atSend" onclick="enviarMsg()" disabled style="background:var(--accent);color:#fff;font-weight:700;padding:10px 18px;">Enviar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: FLYER MANUAL (atendente combinou por fora e quer gerar) ============ -->
+<div id="flyerOverlay" class="overlay hidden">
+  <div class="modal" style="max-width:520px;">
+    <h2 style="margin-top:0;">🎨 Gerar Flyer manual</h2>
+    <p style="color:var(--muted);margin-top:0;">Use quando você mesmo combinou os detalhes da reserva no WhatsApp e o robô não ofereceu o flyer (ex: conversa em atendimento humano). Gera com a arte do bar (sem selfie) e manda direto pro cliente.</p>
+    <div class="field"><label>Nome *</label><input id="fl_nome"></div>
+    <div class="row2">
+      <div class="field"><label>Data *</label><input id="fl_data" type="date"></div>
+      <div class="field"><label>Horário</label><input id="fl_hora" type="time"></div>
+    </div>
+    <div class="field"><label>Setor / local</label><input id="fl_setor" list="fl_setorList" placeholder="Ex: Praça Central, ao lado da fonte"><datalist id="fl_setorList"></datalist></div>
+    <div class="field"><label>Ocasião</label><input id="fl_ocasiao" placeholder="Ex: aniversário, happy hour, encontro"></div>
+    <div class="field"><label>Ajuste de estilo (opcional)</label><input id="fl_extra" placeholder="Ex: mais escuro, tema neon"></div>
+    <div class="err" id="flyerErr"></div>
+    <div class="foot">
+      <button class="b-cancel" onclick="closeFlyerManual()">Cancelar</button>
+      <button id="flyerBtn" class="b-blue" style="color:#fff;" onclick="gerarFlyerManual()">🎨 Gerar e enviar</button>
     </div>
   </div>
 </div>
@@ -924,12 +947,56 @@ async function devolver(){
   if(r&&r.msg) alert('🤖 '+r.msg);
   await refreshAtend();
 }
+async function registrarReserva(){
+  const b=document.getElementById('atRegistrar'); b.disabled=true; b.textContent='📋 Lendo a conversa...';
+  let r;
+  try{ r=await robo('POST','/painel/registrar-reserva',{casa_id:casaAtual.id,telefone:convAtual.telefone}); }
+  catch(e){ r={ok:false,erro:String(e)}; }
+  b.disabled=false; b.textContent='📋 Registrar Reserva';
+  alert(r&&r.msg?'📋 '+r.msg:'Não consegui verificar: '+((r&&r.erro)||'erro desconhecido'));
+  await refreshAtend();
+}
 async function enviarMsg(){
   const inp=document.getElementById('atInput'); const t=inp.value.trim(); if(!t) return;
   inp.value=''; document.getElementById('atSend').disabled=true;
   const res=await painel('painel_send',{texto:t});
   if(!res || !res.ok) alert('Não consegui enviar: '+((res&&(res.erro||res.status))||'erro'));
   await refreshAtend(); document.getElementById('atSend').disabled=false;
+}
+
+// ===================== FLYER MANUAL =====================
+function abrirFlyerManual(){
+  document.getElementById('fl_nome').value=(convAtual&&convAtual.nome)||'';
+  document.getElementById('fl_data').value=isoToday();
+  document.getElementById('fl_hora').value='';
+  document.getElementById('fl_setor').value='';
+  document.getElementById('fl_ocasiao').value='';
+  document.getElementById('fl_extra').value='';
+  document.getElementById('flyerErr').textContent='';
+  const dl=document.getElementById('fl_setorList');
+  dl.innerHTML=(ambientes||[]).map(a=>`<option value="${esc(a.nome)}">`).join('');
+  document.getElementById('flyerOverlay').classList.remove('hidden');
+}
+function closeFlyerManual(){ document.getElementById('flyerOverlay').classList.add('hidden'); }
+async function gerarFlyerManual(){
+  const nome=document.getElementById('fl_nome').value.trim();
+  const data=document.getElementById('fl_data').value;
+  const hora=document.getElementById('fl_hora').value;
+  const setor=document.getElementById('fl_setor').value.trim();
+  const ocasiao=document.getElementById('fl_ocasiao').value.trim();
+  const extra=document.getElementById('fl_extra').value.trim();
+  const err=document.getElementById('flyerErr'); err.textContent='';
+  if(!nome||!data){ err.textContent='Nome e data são obrigatórios.'; return; }
+  if(!convAtual||!convAtual.telefone){ err.textContent='Abra a conversa do cliente primeiro.'; return; }
+  const btn=document.getElementById('flyerBtn'); btn.disabled=true; btn.textContent='Gerando... (leva ~30s)';
+  let r;
+  try{ r=await robo('POST','/painel/flyer',{casa_id:casaAtual.id,telefone:convAtual.telefone,nome,data,hora,setor,ocasiao,extra}); }
+  catch(e){ r={ok:false,erro:String(e)}; }
+  btn.disabled=false; btn.textContent='🎨 Gerar e enviar';
+  if(!r||!r.ok){ err.textContent='Falhou: '+((r&&r.erro)||'erro desconhecido'); return; }
+  closeFlyerManual();
+  alert('Flyer enviado pro cliente! 🎉');
+  refreshAtend();
 }
 
 // ===================== Datas =====================

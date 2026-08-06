@@ -557,9 +557,9 @@ async function gerarFlyerGemini(selfie, ctx, ocasiao, extra) {
   return null
 }
 async function gerarEnviarFlyer(casa, from, selfie, ctx, ocasiao, extra) {
-  if (selfie && !(await imagemApropriada(selfie.b64, selfie.mime))) { await sendText(from, 'Essa foto não pode ser usada 🙅 Envie outra selfie apropriada que eu monto 🙂'); return }
+  if (selfie && !(await imagemApropriada(selfie.b64, selfie.mime))) { await sendText(from, 'Essa foto não pode ser usada 🙅 Envie outra selfie apropriada que eu monto 🙂'); return false }
   const flyer = await gerarFlyerGemini(selfie, ctx || {}, ocasiao, extra)
-  if (!flyer) { await sendText(from, 'Não consegui gerar o flyer agora 😕 Mas sua reserva está garantida!'); return }
+  if (!flyer) { await sendText(from, 'Não consegui gerar o flyer agora 😕 Mas sua reserva está garantida!'); return false }
   const link = ctx?.token ? `\n\n📋 Confirmem presença: ${LINK_BASE}/confirmar.html?t=${ctx.token}` : ''
   await enviarImagemB64(from, flyer.b64, `Seu flyer do Botequim! 🎉 Manda pros convidados.${link}`)
   const c = (await sb.from('conversas').select('flyer_count').eq('casa_id', casa.id).eq('telefone', from).maybeSingle()).data
@@ -567,6 +567,7 @@ async function gerarEnviarFlyer(casa, from, selfie, ctx, ocasiao, extra) {
   await upConversa(casa.id, from, { flyer_count: novo, flyer_feedback: true, flyer_etapa: null })
   if (novo >= 3) await sendText(from, 'Pronto! 🎉 (último ajuste). Pode enviar aos convidados. Ficou alguma *dúvida*? É só perguntar 🙂 Te esperamos! 🍻')
   else await sendText(from, 'Ficou bom? 😊 Quer alterar algo (ex: "mais escuro")? É só dizer. Se estiver ótimo, avise! 🙌')
+  return true
 }
 
 // ===================== PAINEL (login Supabase + WhatsApp por unidade) =====================
@@ -814,6 +815,41 @@ app.post('/painel/devolver', async (req, res) => {
   await sb.from('conversas').update({ handoff: false, handoff_aguardando: false, updated_at: new Date().toISOString() }).eq('casa_id', casa_id).eq('telefone', telefone)
   const check = await als.run({ inst: instDaCasa(casa.slug) }, () => verificarReservaPosHandoff(casa, telefone, conv?.historico))
   res.json({ ok: true, ...check })
+})
+
+// registrar reserva SEM devolver a conversa (Lucas 06/08): mesma verificação/criação automática
+// do "Devolver ao robô", mas o atendente continua no controle da conversa — usa quando ele já
+// combinou tudo com o cliente e só quer que a reserva combinada suba pro sistema (link de
+// confirmação dos convidados + lembretes 24h/1h), sem passar a conversa de volta pro robô.
+app.post('/painel/registrar-reserva', async (req, res) => {
+  const u = await exigeLogin(req, res); if (!u) return
+  const { casa_id, telefone } = req.body || {}
+  if (!casa_id || !telefone) return res.status(400).json({ ok: false, erro: 'casa_id e telefone são obrigatórios.' })
+  if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
+  const casa = await getCasaPorId(casa_id)
+  if (!casa) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
+  const conv = (await sb.from('conversas').select('historico').eq('casa_id', casa_id).eq('telefone', telefone).maybeSingle()).data
+  const check = await als.run({ inst: instDaCasa(casa.slug) }, () => verificarReservaPosHandoff(casa, telefone, conv?.historico))
+  res.json({ ok: true, ...check })
+})
+
+// flyer manual (Lucas 06/08): quem assumiu o atendimento (handoff) combina os detalhes
+// direto com o cliente e o robô não entra nessa conversa pra oferecer o flyer sozinho —
+// este endpoint deixa o humano disparar o mesmo gerador usado pelo fluxo automático,
+// funciona com a conversa em handoff ou não, e não depende de reserva já estar no sistema.
+app.post('/painel/flyer', async (req, res) => {
+  const u = await exigeLogin(req, res); if (!u) return
+  const { casa_id, telefone, nome, data, hora, setor, ocasiao, extra } = req.body || {}
+  if (!casa_id || !telefone || !nome || !data) return res.status(400).json({ ok: false, erro: 'casa_id, telefone, nome e data são obrigatórios.' })
+  if (!podeCasa(await casasPermitidas(u), casa_id)) return res.status(403).json({ ok: false, erro: 'Sem acesso a esta unidade.' })
+  const casa = await getCasaPorId(casa_id)
+  if (!casa) return res.status(404).json({ ok: false, erro: 'Casa não encontrada.' })
+  const tel = normNum(telefone)
+  // se já existir reserva ativa dessa pessoa nessa data, aproveita o token pro link de confirmação dos convidados
+  const dup = (await sb.from('reservas').select('token').eq('casa_id', casa_id).eq('telefone', tel).eq('data', data).in('status', ['pendente', 'confirmada']).limit(1).maybeSingle()).data
+  const ctx = { nome, data, hora: hora || '', setor: setor || '', casa: casa.nome, token: dup?.token }
+  const ok = await als.run({ inst: instDaCasa(casa.slug) }, () => gerarEnviarFlyer(casa, tel, null, ctx, ocasiao || '', extra || ''))
+  res.json({ ok, erro: ok ? undefined : 'Gemini não conseguiu gerar a imagem agora — cliente já foi avisado. Tente de novo em instantes.' })
 })
 
 // ===================== LEMBRETES 24h / 1h =====================
