@@ -1024,7 +1024,21 @@ async function processarMensagem(body) {
       }
       await upConversa(casa.id, from, { handoff: false, handoff_aguardando: false })
       conv.handoff = false
-      await sendText(from, 'Desculpa a demora — nosso atendente não conseguiu te responder por aqui ainda 🙏 Posso continuar te ajudando 🙂')
+      // QA Giovana 10/08: o "desculpa a demora" saía até pra quem só mandou "oi"
+      // dias depois — não fazia sentido nenhum, e ainda vinha grudado na saudação.
+      // Agora só pede desculpa quem REALMENTE ficou no vácuo: falou durante o
+      // handoff, ninguém respondeu, e faz pouco tempo. O resto cai direto no menu.
+      const corte = new Date(Date.now() - 5000).toISOString() // ignora a msg de agora
+      const inst = body.instance || INSTANCE
+      const minhaUlt = (await sb.from('wa_mensagens').select('ts').eq('instance', inst).eq('numero', from)
+        .eq('minha', true).order('ts', { ascending: false }).limit(1).maybeSingle()).data
+      const delaAnterior = (await sb.from('wa_mensagens').select('ts').eq('instance', inst).eq('numero', from)
+        .eq('minha', false).lt('ts', corte).order('ts', { ascending: false }).limit(1).maybeSingle()).data
+      const ficouNoVacuo = delaAnterior?.ts && (!minhaUlt?.ts || new Date(delaAnterior.ts) > new Date(minhaUlt.ts))
+      const aindaRecente = delaAnterior?.ts && (Date.now() - new Date(delaAnterior.ts).getTime() < 12 * 60 * 60 * 1000)
+      if (ficouNoVacuo && aindaRecente) {
+        await sendText(from, 'Desculpa a demora — nosso atendente não conseguiu te responder por aqui ainda 🙏 Posso continuar te ajudando 🙂')
+      }
       // segue o fluxo normal com a mensagem atual
     }
 
