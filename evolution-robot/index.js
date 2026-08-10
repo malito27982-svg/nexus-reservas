@@ -278,6 +278,8 @@ ${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não inve
 CORTESIA/BRINDE/DESCONTO/PROMOÇÃO (Lucas 07/08 — robô prometeu cortesia de aniversário que não existe, cliente cobrou na loja): você SÓ pode afirmar que existe cortesia, brinde, desconto ou qualquer benefício SE isso estiver escrito, palavra por palavra, nas INFORMAÇÕES DA CASA acima. PROIBIDO TERMINANTEMENTE inventar, supor ou "chutar por educação" QUALQUER benefício (ex.: "sobremesa da casa", "fatia de bolo com vela", "bebida cortesia") mesmo que pareça razoável pra um aniversário. Se perguntarem sobre cortesia/brinde/desconto e não estiver cadastrado, NÃO afirme nem negue — diga que vai confirmar certinho com um atendente humano e chame chamar_atendente na hora.
 PAGAMENTO ANTECIPADO/sinal/caução (Lucas 03/08): responda que SIM, conseguimos atender — NUNCA diga que "não trabalhamos com isso". Diga que essa parte quem cuida é um atendente humano e que você vai passar a conversa AGORA pra ele, e chame chamar_atendente na mesma hora.
 DIA DOS PAIS (09/08/2026 — Giovana/Lucas 05/08): assim que perceber que a data pedida é 09/08, NÃO consulte disponibilidade nem peça mais dados — diga com entusiasmo que é Dia dos Pais e que um atendente confirma certinho, e chame chamar_atendente IMEDIATAMENTE.
+FUTEBOL (QA Giovana 10/08): se o cliente perguntar se vai ter/passar jogo, qual jogo, ou disser que quer vir assistir futebol, chame a ferramenta jogos_do_dia com a data da reserva (ou a data que ele citou) e responda com os jogos e horários REAIS que ela devolver. PROIBIDO inventar jogo, horário ou campeonato. Se a ferramenta não conseguir buscar, ela mesma transfere pro atendente humano. Sobre TELÃO/TV da casa você não tem informação cadastrada — se perguntarem onde fica o telão ou se passa na TV daqui, chame chamar_atendente.
+
 CARDÁPIO (QA Giovana 03/08): se o cliente pedir cardápio/menu/pratos/preços de comida, chame a ferramenta enviar_cardapio — o PDF chega direto no chat. PROIBIDO inventar, chutar ou montar QUALQUER link/URL (de cardápio ou de outra coisa): você NÃO tem nenhum link além dos que as ferramentas mandam sozinhas.
 
 ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}${futuras.length ? `RESERVA JÁ ATIVA neste número: ${futTxt} (o dia da semana informado aí é o CORRETO — não recalcule). Se a mensagem for dúvida/assunto sobre essa reserva (horário, convidados, mudança...), responda SOBRE ELA — NÃO trate como reserva nova e NÃO fique empurrando o cliente a reservar de novo. Pra alterar ou cancelar, oriente a responder "atendente".\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
@@ -288,6 +290,10 @@ ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nasc
     { name: 'chamar_atendente', description: 'Transfere a conversa AGORA pra um atendente humano. Use quando: o cliente pedir pagamento antecipado/sinal, quiser a programação musical exata de um dia, pedir uma pessoa, ou você não tiver a informação.', input_schema: { type: 'object', properties: { motivo: { type: 'string' } }, required: [] } },
     // QA Giovana 03/08: agente inventava link de cardápio — agora manda o PDF de verdade
     { name: 'enviar_cardapio', description: 'Envia o PDF do cardápio completo da casa direto no chat. Use SEMPRE que o cliente pedir cardápio, menu, pratos ou preços de comida. NUNCA invente links de cardápio.', input_schema: { type: 'object', properties: {}, required: [] } },
+    // Giovana 10/08: cliente pergunta "vai passar o jogo?" — o robô busca a
+    // grade REAL do dia (Brasileirão A, Libertadores, Sudamericana). Se a busca
+    // falhar, transfere pro humano em vez de chutar.
+    { name: 'jogos_do_dia', description: 'Descobre QUAIS JOGOS de futebol acontecem numa data (Brasileirão Série A, Libertadores e Sudamericana), com horário de Brasília. Use SEMPRE que o cliente perguntar se vai ter/passar jogo, qual jogo, ou quiser reservar pra assistir futebol. NUNCA invente jogo nem horário.', input_schema: { type: 'object', properties: { data: { type: 'string', description: 'Data no formato AAAA-MM-DD' } }, required: ['data'] } },
     // Lucas 03/08: o robô pode reagir com emoji como um atendente humano faria
     { name: 'reagir', description: 'Reage com UM emoji à mensagem do cliente (como no WhatsApp). Use com moderação quando fizer sentido: agradecimento/elogio = ❤️, confirmação animada = 👍, comemoração (aniversário, título) = 🎉. NUNCA em reclamação ou dúvida. No máximo 1 por mensagem, e continue respondendo normalmente em texto.', input_schema: { type: 'object', properties: { emoji: { type: 'string' } }, required: ['emoji'] } },
   ]
@@ -298,6 +304,16 @@ ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nasc
       await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true, flyer_etapa: null, flyer_feedback: false })
       await avisarGerente(casa, from, `precisa de atendimento humano${inp?.motivo ? ' — ' + String(inp.motivo).slice(0, 80) : ''}`)
       return { ok: true, transferido: true, instrucao: `Conversa transferida. Avise o cliente que um atendente humano do bar continua a conversa por aqui e INCLUA este aviso de horário (pode adaptar de leve, PROIBIDO inventar horários): "${await avisoAtendimentoHumano(casa.id)}"` }
+    }
+    if (name === 'jogos_do_dia') {
+      const r = await jogosDoDia(inp?.data)
+      if (r.erro) {
+        await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
+        await avisarGerente(casa, from, 'perguntou sobre jogo e a busca da grade falhou')
+        return { ok: false, transferido: true, instrucao: `Não consegui consultar a tabela de jogos. Avise que vai passar pra um atendente conferir e INCLUA: "${await avisoAtendimentoHumano(casa.id)}"` }
+      }
+      if (!r.jogos.length) return { ok: true, jogos: [], instrucao: 'Nesse dia NÃO há jogo de Brasileirão A, Libertadores nem Sudamericana. Diga isso ao cliente com naturalidade e NÃO invente outro campeonato.' }
+      return { ok: true, jogos: r.jogos, instrucao: 'Liste os jogos com o horário de Brasília. Se o cliente perguntar se PASSA no telão da casa, não afirme nada sobre telão — use chamar_atendente.' }
     }
     if (name === 'enviar_cardapio') {
       const ok = await enviarPdfCardapio(casa, from)
@@ -464,6 +480,51 @@ async function avisoAtendimentoHumano(casaId) {
     ? `🕐 Nosso atendimento humano funciona no horário de funcionamento da casa: ${h.texto} Se você mandou mensagem fora desse horário, respondemos assim que o atendimento abrir 🙏`
     : '🕐 Nosso atendimento humano responde dentro do horário de funcionamento da casa — se você mandou mensagem fora desse horário, respondemos assim que o atendimento abrir 🙏'
 }
+// ⚽ GRADE DE JOGOS DO DIA (pedido da Giovana 10/08): "se o cliente perguntar se
+// vai passar o jogo, puxa quais jogos tem no dia da reserva; se não conseguir
+// buscar, passa pro atendimento humano". Fonte pública da ESPN (sem cadastro,
+// sem chave). Campeonatos que enchem bar: Brasileirão A, Libertadores e
+// Sudamericana. Cache de 1h pra não bater na API a cada mensagem.
+const LIGAS = [
+  ['bra.1', 'Brasileirão Série A'],
+  ['conmebol.libertadores', 'Libertadores'],
+  ['conmebol.sudamericana', 'Sudamericana'],
+]
+const cacheJogos = new Map()
+async function jogosDoDia(data) {
+  const d = String(data || '').slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return { erro: 'data inválida' }
+  const cache = cacheJogos.get(d)
+  if (cache && Date.now() - cache.em < 60 * 60 * 1000) return cache.valor
+  const dia = d.replace(/-/g, '')
+  const jogos = []
+  let algumaOk = false
+  for (const [slug, nome] of LIGAS) {
+    try {
+      const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}/scoreboard?dates=${dia}`, { signal: AbortSignal.timeout(8000) })
+      if (!r.ok) continue
+      const j = await r.json()
+      algumaOk = true
+      for (const e of j.events || []) {
+        const cs = e.competitions?.[0]?.competitors || []
+        const casa = cs.find((c) => c.homeAway === 'home')?.team?.displayName
+        const fora = cs.find((c) => c.homeAway === 'away')?.team?.displayName
+        if (!casa || !fora) continue
+        jogos.push({
+          campeonato: nome,
+          jogo: `${casa} x ${fora}`,
+          hora: new Date(e.date).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }),
+        })
+      }
+    } catch (err) { console.warn(`⚽ ${slug}: ${err.message}`) }
+  }
+  if (!algumaOk) return { erro: 'não consegui consultar a tabela de jogos' }
+  jogos.sort((a, b) => a.hora.localeCompare(b.hora))
+  const valor = { jogos }
+  cacheJogos.set(d, { em: Date.now(), valor })
+  return valor
+}
+
 async function enviarPdfCardapio(casa, from) {
   const cc = (await sb.from('casas').select('cardapio_url').eq('id', casa.id).maybeSingle()).data
   if (!cc?.cardapio_url) return false
