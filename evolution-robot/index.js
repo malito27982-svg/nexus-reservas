@@ -147,6 +147,19 @@ async function avisarGerente(casa, from, motivo) {
 // ===================== MENU (texto) =====================
 // Delivery DESATIVADO no menu em 19/07/2026 (go-live começa só com reservas; religar = voltar a opção + o intent)
 const MENU_TXT = (nome) => `Olá! 👋 Seja bem-vindo(a) ao *${nome}*. Como posso te ajudar? Responda com o *número*:\n\n1️⃣ Reservas\n2️⃣ Cardápio\n3️⃣ Dúvidas (horários, endereço, eventos...)\n4️⃣ Reclamações\n5️⃣ Minhas reservas\n6️⃣ Falar com atendente`
+
+// 🔐 LGPD (QA Giovana 10/08: "ele avisa da LGPD em TODA mensagem; tem que avisar
+// na PRIMEIRA, quando a pessoa chama"). Antes ficava a cargo da IA ("avise 1x") e
+// ela repetia sem parar. Agora é do SISTEMA: sai uma única vez, grudado na
+// saudação, e fica carimbado em conversas.lgpd_avisado. A IA está proibida de
+// escrever aviso de LGPD.
+const LGPD_TXT = '_🔐 Seus dados são usados só pra registrar e confirmar seu atendimento, conforme a LGPD. Pra sair da nossa lista é só pedir._'
+async function menuComLgpd(casa, from, conv) {
+  const base = MENU_TXT(casa.nome)
+  if (conv?.lgpd_avisado) return base
+  await upConversa(casa.id, from, { lgpd_avisado: new Date().toISOString() })
+  return `${base}\n\n${LGPD_TXT}`
+}
 function intentDoTexto(t) {
   const s = t.trim().toLowerCase()
   if (/^1\b|reserva/.test(s)) return 'reservas'
@@ -282,7 +295,7 @@ FUTEBOL (QA Giovana 10/08): se o cliente perguntar se vai ter/passar jogo, qual 
 
 CARDÁPIO (QA Giovana 03/08): se o cliente pedir cardápio/menu/pratos/preços de comida, chame a ferramenta enviar_cardapio — o PDF chega direto no chat. PROIBIDO inventar, chutar ou montar QUALQUER link/URL (de cardápio ou de outra coisa): você NÃO tem nenhum link além dos que as ferramentas mandam sozinhas.
 
-${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}${futuras.length ? `RESERVA JÁ ATIVA neste número: ${futTxt} (o dia da semana informado aí é o CORRETO — não recalcule). Se a mensagem for dúvida/assunto sobre essa reserva (horário, convidados, mudança...), responda SOBRE ELA — NÃO trate como reserva nova e NÃO fique empurrando o cliente a reservar de novo. Pra alterar ou cancelar, oriente a responder "atendente".\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). Avise LGPD 1x. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
+${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}${futuras.length ? `RESERVA JÁ ATIVA neste número: ${futTxt} (o dia da semana informado aí é o CORRETO — não recalcule). Se a mensagem for dúvida/assunto sobre essa reserva (horário, convidados, mudança...), responda SOBRE ELA — NÃO trate como reserva nova e NÃO fique empurrando o cliente a reservar de novo. Pra alterar ou cancelar, oriente a responder "atendente".\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). PROIBIDO escrever qualquer aviso de LGPD/proteção de dados (QA Giovana 10/08: você repetia isso em toda mensagem) — o sistema já manda esse aviso sozinho, uma única vez, na saudação. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
   const tools = [
     { name: 'consultar_disponibilidade', description: 'Verifica data aberta e setores que comportam as pessoas.', input_schema: { type: 'object', properties: { data: { type: 'string' }, pessoas: { type: 'integer' } }, required: ['data', 'pessoas'] } },
     { name: 'criar_reserva', description: 'Cria a reserva. Só quando o cliente confirmar.', input_schema: { type: 'object', properties: { nome: { type: 'string' }, data: { type: 'string' }, hora: { type: 'string' }, pessoas: { type: 'integer' }, setor: { type: 'string' }, nascimento: { type: 'string', description: 'data de nascimento AAAA-MM-DD (obrigatória)' } }, required: ['nome', 'data', 'pessoas', 'setor', 'nascimento'] } },
@@ -1153,7 +1166,7 @@ async function processarMensagem(body) {
           await sendText(from, oi); return
         }
         await upConversa(casa.id, from, { ...reset, aguardando: 'menu' })
-        await sendText(from, MENU_TXT(casa.nome)); return
+        await sendText(from, await menuComLgpd(casa, from, conv)); return
       }
     }
 
@@ -1273,7 +1286,7 @@ async function processarMensagem(body) {
     // 1a mensagem sem pedido claro -> mostra o menu e espera a escolha
     if (!conv.saudou && history.length === 0 && !intentDoTexto(texto) && !/reserv|mesa|\d+\s*pessoa|delivery|pedid|d[uú]vida/i.test(texto)) {
       await upConversa(casa.id, from, { saudou: true, aguardando: 'menu' })
-      await sendText(from, MENU_TXT(casa.nome)); return
+      await sendText(from, await menuComLgpd(casa, from, conv)); return
     }
 
     // escolha do menu (por número 1-7 ou palavra), só quando estamos esperando a escolha
