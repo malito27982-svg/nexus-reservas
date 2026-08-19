@@ -1131,7 +1131,7 @@ function actions(r){
   if(r.status==='pendente')   return A('b-blue','confirmada','Confirmar')+A('b-teal','chegou','Chegou')+A('b-purple','checkin','Sentou')+A('b-amber','no_show','Não veio')+A('b-red','cancelado','Cancelar');
   if(r.status==='confirmada') return A('b-teal','chegou','Chegou')+A('b-purple','checkin','Sentou')+M+A('b-amber','no_show','Não veio')+A('b-red','cancelado','Cancelar');
   if(r.status==='chegou')     return A('b-purple','checkin','Sentou')+M+A('b-amber','no_show','Não veio')+A('b-red','cancelado','Cancelar');
-  if(r.status==='checkin')    return M+A('b-purple','concluido','Concluir')+A('b-amber','no_show','Não veio');
+  if(r.status==='checkin')    return M+A('b-purple','concluido','Concluir')+A('b-amber','no_show','Não veio')+`<button class="b-slate" onclick="voltarPraDia('${r.id}')">↩ Voltar</button>`;
   return A('b-slate','pendente','Reabrir');
 }
 async function openMesa(id){
@@ -1161,6 +1161,26 @@ async function transferir(id){
   alert(`Reserva transferida para ${destino.nome}. Troque pra essa casa no topo e reatribua o setor.`);
   loadReservas();
 }
+// 19/08/2026: "Sentou" era o ÚNICO estado sem volta — quem abria a mesa por engano
+// ficava preso na aba Check-in, sem jeito de devolver a reserva pro Reservas do Dia
+// (Lucas travou nisso com a reserva da Acsa Dutra). Os outros estados finais já
+// tinham "Reabrir"; esse não tinha nada.
+async function voltarPraDia(id){
+  const r=reservas.find(x=>x.id===id); if(!r) return;
+  const aviso='Voltar '+r.nome+' para as Reservas do Dia?
+
+O check-in é desfeito'
+    + (r.mesa_numero ? ' e a mesa '+r.mesa_numero+' é fechada.' : '.');
+  if(!confirm(aviso)) return;
+  const {error}=await sb.from('reservas').update({
+    status:'confirmada', checkin_em:null,
+    mesa_numero:null, mesa_aberta_em:null, epoc_status:null,
+  }).eq('id',id);
+  if(error){ alert('Erro: '+error.message); return; }
+  tabAtual='dia'; // leva a tela junto com a reserva, senão ela "some" do olho de quem clicou
+  loadReservas();
+}
+
 async function setStatus(id,st){
   const patch={status:st}, now=new Date().toISOString();
   if(st==='confirmada') patch.confirmada_em=now;
