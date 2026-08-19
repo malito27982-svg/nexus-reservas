@@ -1167,9 +1167,7 @@ async function transferir(id){
 // tinham "Reabrir"; esse não tinha nada.
 async function voltarPraDia(id){
   const r=reservas.find(x=>x.id===id); if(!r) return;
-  const aviso='Voltar '+r.nome+' para as Reservas do Dia?
-
-O check-in é desfeito'
+  const aviso='Voltar '+r.nome+' para as Reservas do Dia?\n\nO check-in é desfeito'
     + (r.mesa_numero ? ' e a mesa '+r.mesa_numero+' é fechada.' : '.');
   if(!confirm(aviso)) return;
   const {error}=await sb.from('reservas').update({
