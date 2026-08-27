@@ -10,3 +10,4 @@ node_modules/
 # sessao do WhatsApp (Baileys) e pasta de teste local — NUNCA versionar
 **/auth/
 wpp-qr-test/
+*.bak-*
