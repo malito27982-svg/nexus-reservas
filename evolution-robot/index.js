@@ -282,18 +282,29 @@ AGENDA SEMANAL de reservas (janela de chegada por dia — use pra responder "que
 ${agenda}
 DIA FECHADO: se pedirem um dia marcado como fechado, diga os dias e horários REAIS da agenda acima — PROIBIDO inventar (ex.: nunca diga "só de sexta a domingo" se a agenda mostra outra coisa). Eventos especiais podem abrir dia extra — na dúvida, consultar_disponibilidade.
 HORÁRIOS exatos do dia podem variar (evento/lotação) — antes de fechar reserva, SEMPRE use consultar_disponibilidade.
-${dcfg?.endereco ? `ENDEREÇO da casa: ${dcfg.endereco}. Quando perguntarem onde fica, responda EXATAMENTE este endereço — PROIBIDO inventar rua ou número.` : 'ENDEREÇO: você NÃO tem o endereço cadastrado — se perguntarem, diga que o atendente confirma (responda "atendente") e NUNCA invente.'}
+${dcfg?.endereco ? `ENDEREÇO da casa: ${dcfg.endereco}. Quando perguntarem onde A CASA fica, responda EXATAMENTE este endereço — PROIBIDO inventar rua ou número. ATENÇÃO (QA 19/08): esta regra vale SÓ para o endereço DA CASA. Se perguntarem o endereço de OUTRA coisa (estacionamento, valet, entrada, portaria), a resposta está nas INFORMAÇÕES DA CASA — leia lá antes de responder e NÃO devolva o endereço da casa no lugar.` : 'ENDEREÇO: você NÃO tem o endereço cadastrado — se perguntarem, diga que o atendente confirma (responda "atendente") e NUNCA invente.'}
 HORÁRIO FORA DA LISTA: se o cliente pedir um horário depois do último da lista, NÃO diga que "não está disponível" — explique que naquele dia pegamos reservas só até o ÚLTIMO horário da lista (diga qual é) e ofereça esse último horário.
 Se vier "horarios_por_setor", esses horários extras valem SÓ para o setor indicado — deixe isso claro ao oferecer.
 Se vier "aviso" (ex.: promoção de almoço), mencione UMA vez em TODA reserva, mas ADAPTE ao horário (QA Giovana 30/07): reserva/consulta DENTRO da janela do aviso = sugestão direta ("ótima pedida para o seu horário"); reserva FORA da janela (jantar, fim de semana) = só curiosidade, no formato "Você sabia que de segunda a sexta, das 12h às 15h, temos [o aviso]? Fica o convite!" — NUNCA diga que é "ótima pedida para o seu horário" quando a reserva não cai na janela.
 EVENTOS: se vier "evento", avise com entusiasmo (título, descrição, menu/preço).
 ${infosTxt ? `\nINFORMAÇÕES DA CASA (responda dúvidas SÓ com isto, não invente):\n${infosTxt}\n` : ''}SEM RESPOSTA: dúvida que NÃO está nas INFORMAÇÕES DA CASA nem na agenda (atração/tipo de música de um dia, valores que você não tem...) → NÃO invente NADA e NÃO prometa "verificar"/"me dá um momento" (você não consegue voltar sozinho depois): responda o que sabe e chame chamar_atendente pro restante.
 CORTESIA/BRINDE/DESCONTO/PROMOÇÃO (Lucas 07/08 — robô prometeu cortesia de aniversário que não existe, cliente cobrou na loja): você SÓ pode afirmar que existe cortesia, brinde, desconto ou qualquer benefício SE isso estiver escrito, palavra por palavra, nas INFORMAÇÕES DA CASA acima. PROIBIDO TERMINANTEMENTE inventar, supor ou "chutar por educação" QUALQUER benefício (ex.: "sobremesa da casa", "fatia de bolo com vela", "bebida cortesia") mesmo que pareça razoável pra um aniversário. Se perguntarem sobre cortesia/brinde/desconto e não estiver cadastrado, NÃO afirme nem negue — diga que vai confirmar certinho com um atendente humano e chame chamar_atendente na hora.
+NEGAR SERVIÇO (Lucas 19/08 — robô disse 3x "não temos estacionamento próprio" para a Unidade Santo André, que TEM estacionamento conveniado gratuito cadastrado e aprovado): antes de dizer que a casa NÃO tem alguma coisa (estacionamento, valet, comanda individual, música, cortesia, área kids...), releia as INFORMAÇÕES DA CASA acima. Se o assunto estiver lá, responda o que está escrito — PROIBIDO negar. Se NÃO estiver lá, você também NÃO sabe que não existe: não invente a negativa, chame chamar_atendente. Negar por conta própria manda o cliente embora e é pior do que não responder.
 PAGAMENTO ANTECIPADO/sinal/caução (Lucas 03/08): responda que SIM, conseguimos atender — NUNCA diga que "não trabalhamos com isso". Diga que essa parte quem cuida é um atendente humano e que você vai passar a conversa AGORA pra ele, e chame chamar_atendente na mesma hora.
 DIA DOS PAIS (09/08/2026 — Giovana/Lucas 05/08): assim que perceber que a data pedida é 09/08, NÃO consulte disponibilidade nem peça mais dados — diga com entusiasmo que é Dia dos Pais e que um atendente confirma certinho, e chame chamar_atendente IMEDIATAMENTE.
 FUTEBOL (QA Giovana 10/08): se o cliente perguntar se vai ter/passar jogo, qual jogo, ou disser que quer vir assistir futebol, chame a ferramenta jogos_do_dia com a data da reserva (ou a data que ele citou) e responda com os jogos e horários REAIS que ela devolver. PROIBIDO inventar jogo, horário ou campeonato. Se a ferramenta não conseguir buscar, ela mesma transfere pro atendente humano. Sobre TELÃO/TV da casa você não tem informação cadastrada — se perguntarem onde fica o telão ou se passa na TV daqui, chame chamar_atendente.
 
 CARDÁPIO (QA Giovana 03/08): se o cliente pedir cardápio/menu/pratos/preços de comida, chame a ferramenta enviar_cardapio — o PDF chega direto no chat. PROIBIDO inventar, chutar ou montar QUALQUER link/URL (de cardápio ou de outra coisa): você NÃO tem nenhum link além dos que as ferramentas mandam sozinhas.
+
+FESTAS DE FIM DE ANO (Lucas 27/08 — dia 26 e 27/08 dois clientes pediram confraternização de 55 e de 100 pessoas e o robô não soube responder nada): temos PACOTE FECHADO de fim de ano, open food + open bar, um valor por pessoa. Assim que o cliente falar em confraternização, festa da empresa, amigo secreto, ceia, Natal, fim de ano, evento fechado ou grupo grande em novembro/dezembro, chame enviar_pacote_fim_de_ano — o PDF completo chega no chat — e explique os três planos com os números REAIS abaixo. NUNCA invente valor, item ou condição que não esteja aqui.
+  • Vale para eventos de 20/11/2026 a 31/12/2026, a partir de 10 pessoas, com 4 horas de duração. Taxa de serviço NÃO inclusa (cobrada à parte no fechamento).
+  • PRATA — R$ 179,90 por pessoa: 8 porções liberadas com reposição contínua, churros de sobremesa, chopp Brahma liberado, águas/refrigerantes/sucos naturais. SEM destilados.
+  • OURO — R$ 239,90 por pessoa (o mais pedido): 10 porções, incluindo torresmo de rolo; Picanha Aperitivo e Tábua Mista no centro da mesa; churros e sundae; chopp Brahma E Heineken; caipirinha, caipiroska, saquerita e gin tônica na versão tradicional com os destilados da casa.
+  • DIAMANTE — R$ 289,90 por pessoa: 11 porções, incluindo Buffalo Wings; QUATRO carnes (Picanha Aperitivo, Tábua Mista, Cupim Casqueirado na Telha e Bife Ancho com crosta de alho e parmesão); churros, sundae e petit gateau; os dois chopps, os destilados da casa e a carta de Drinks Botequim (Moscow Mule, Aperol Spritz, Fitzgerald, Mojito, Lagoa Azul, Aurora e Lotus).
+  • CRIANÇAS: até 6 anos não pagam; de 7 a 12 anos, metade do valor.
+  • NOTA FISCAL: se a pessoa ou a empresa precisa de DANFE, é OBRIGATÓRIO avisar na reserva, antes de fechar a conta — pergunte isso sempre que soar como evento de empresa.
+  • Petiscos e bebidas liberados SÓ durante as 4 horas contratadas; hora adicional é cobrada à parte. O pacote é só para evento reservado e não substitui o cardápio da casa. Outras marcas, doses e garrafas seguem o cardápio, à parte.
+  • FECHAMENTO: a reserva do pacote é feita com o GERENTE da unidade, sujeita à disponibilidade da data, e confirmada com 25% de sinal (o restante é pago no dia). Você NÃO fecha pacote sozinho: pode explicar tudo e mandar o PDF, mas para reservar a data chame chamar_atendente. PROIBIDO usar criar_reserva para pacote de fim de ano.
 
 ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nascimento ? `, nascimento ${cli.data_nascimento}` : ''}. NÃO peça esses dados de novo — pergunte só "A reserva é para ${cli.nome}?" e use-os no criar_reserva (peça apenas o que faltar).\n` : ''}${futuras.length ? `RESERVA JÁ ATIVA neste número: ${futTxt} (o dia da semana informado aí é o CORRETO — não recalcule). Se a mensagem for dúvida/assunto sobre essa reserva (horário, convidados, mudança...), responda SOBRE ELA — NÃO trate como reserva nova e NÃO fique empurrando o cliente a reservar de novo. Pra alterar ou cancelar, oriente a responder "atendente".\n` : ''}REGRAS: precisa de nome, data, horário, pessoas, setor + DATA DE NASCIMENTO (obrigatória; dd/mm/aaaa, converta p/ AAAA-MM-DD ao criar). NÃO peça CPF nem e-mail (o telefone já vem do WhatsApp). PROIBIDO escrever qualquer aviso de LGPD/proteção de dados (QA Giovana 10/08: você repetia isso em toda mensagem) — o sistema já manda esse aviso sozinho, uma única vez, na saudação. SEMPRE consultar_disponibilidade antes. A reserva SÓ existe após criar_reserva retornar ok:true — proibido dizer "confirmada" sem isso. +49 pessoas o sistema aciona o responsável. Se pedir atendente, o sistema transfere. Seja breve. Antes de criar, repita os dados começando com "Vou confirmar sua reserva:" (NUNCA diga "confirmar seu resumo") e, após o OK do cliente, chame criar_reserva.` }]
   const tools = [
@@ -303,6 +314,10 @@ ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nasc
     { name: 'chamar_atendente', description: 'Transfere a conversa AGORA pra um atendente humano. Use quando: o cliente pedir pagamento antecipado/sinal, quiser a programação musical exata de um dia, pedir uma pessoa, ou você não tiver a informação.', input_schema: { type: 'object', properties: { motivo: { type: 'string' } }, required: [] } },
     // QA Giovana 03/08: agente inventava link de cardápio — agora manda o PDF de verdade
     { name: 'enviar_cardapio', description: 'Envia o PDF do cardápio completo da casa direto no chat. Use SEMPRE que o cliente pedir cardápio, menu, pratos ou preços de comida. NUNCA invente links de cardápio.', input_schema: { type: 'object', properties: {}, required: [] } },
+    // Lucas 27/08: pacote fechado de fim de ano (Prata/Ouro/Diamante). 26 e 27/08
+    // dois clientes pediram confraternização (55 e 100 pessoas) e o robô só sabia
+    // transferir — dava pra vender ali mesmo.
+    { name: 'enviar_pacote_fim_de_ano', description: 'Envia o PDF dos pacotes de festa de fim de ano (Prata R$179,90 / Ouro R$239,90 / Diamante R$289,90 por pessoa, open food + open bar, 4 horas, de 20/11 a 31/12, a partir de 10 pessoas). Use SEMPRE que o cliente falar em confraternização, festa de empresa, amigo secreto, ceia, Natal, réveillon, fim de ano, evento fechado, open bar, ou pedir orçamento para grupo grande em novembro/dezembro.', input_schema: { type: 'object', properties: {}, required: [] } },
     // Giovana 10/08: cliente pergunta "vai passar o jogo?" — o robô busca a
     // grade REAL do dia (Brasileirão A, Libertadores, Sudamericana). Se a busca
     // falhar, transfere pro humano em vez de chutar.
@@ -331,6 +346,12 @@ ${cli ? `CLIENTE JÁ CADASTRADO neste número: nome "${cli.nome}"${cli.data_nasc
     if (name === 'enviar_cardapio') {
       const ok = await enviarPdfCardapio(casa, from)
       return ok ? { ok: true, instrucao: 'O PDF do cardápio ACABOU de ser enviado no chat. Só confirme ao cliente que o cardápio chegou — NÃO mande nenhum link.' } : { ok: false, instrucao: 'Cardápio não cadastrado pra esta casa — chame chamar_atendente.' }
+    }
+    if (name === 'enviar_pacote_fim_de_ano') {
+      const ok = await enviarPdfFimDeAno(casa, from)
+      return ok
+        ? { ok: true, instrucao: 'O PDF dos pacotes de fim de ano ACABOU de ser enviado no chat — NÃO mande nenhum link. Agora, em UMA mensagem curta, apresente os três planos com os valores por pessoa (Prata 179,90 / Ouro 239,90 / Diamante 289,90), diga que são 4 horas de open food e open bar a partir de 10 pessoas, e pergunte a DATA e QUANTAS PESSOAS. Se for evento de empresa, pergunte também se vão precisar de nota fiscal (DANFE). Lembre que a data é fechada com o gerente, com 25% de sinal — e chame chamar_atendente quando o cliente quiser reservar de fato.' }
+        : { ok: false, instrucao: 'Não consegui enviar o PDF do pacote. Explique os planos pelo texto que você já tem e chame chamar_atendente.' }
     }
     if (name === 'reagir') {
       if (reactKey) await enviarReacao(from, reactKey, inp?.emoji)
@@ -373,8 +394,18 @@ REGRAS: nunca invente itens/preços. Não confirme sem finalizar_pedido com ok:t
 
 // loop generico Claude (retorna {text, followups})
 async function claudeLoop(system, tools, history, exec, maxIter = 5) {
-  // Gemini TITULAR (Lucas 03/08): sem chave Anthropic no ambiente, vai DIRETO no Gemini — não gasta uma chamada só pra falhar
-  if (!ANTHROPIC_KEY && GEMINI_KEY) return geminiLoop(system, tools, history, exec, maxIter)
+  // Gemini TITULAR (Lucas 03/08, reafirmado 24/08): o Gemini é o PLANO A — é nele que as
+  // regras de QA foram ajustadas, então é o comportamento que a operação validou.
+  // A Anthropic é o PLANO B e só entra quando o Gemini para DE VEZ (teto de gasto, crédito
+  // zerado, chave inválida). Erro passageiro não aciona o plano B: o Gemini mesmo retenta.
+  // Sábado 22/08 o Gemini bateu no teto e não havia plano B nenhum — 113 mensagens de
+  // "instabilidade" pra 21 clientes. É esse buraco que isto aqui fecha.
+  if (GEMINI_KEY) {
+    const r = await geminiLoop(system, tools, history, exec, maxIter)
+    if (!r || !r._permanente) return r
+    if (!ANTHROPIC_KEY) return r // sem plano B: r já vem com _handoff (atendente humano)
+    console.error('↪️ PLANO B: Gemini fora de vez, assumindo com a Anthropic')
+  }
   const messages = history.map((m) => ({ role: m.role, content: m.content }))
   const followups = []
   for (let i = 0; i < maxIter; i++) {
@@ -389,11 +420,9 @@ async function claudeLoop(system, tools, history, exec, maxIter = 5) {
       // chave inválida/sem permissão/billing = erro PERMANENTE: pedir pra repetir só gera loop.
       // Plano B (Lucas 27/07): cai pro GEMINI (mesma chave do flyer) — quando a chave Anthropic
       // voltar, o Claude reassume sozinho (o fallback só roda no erro). Sem Gemini: atendente humano.
+      // 24/08: aqui é o PLANO B falhando. Não adianta voltar pro Gemini — se chegamos
+      // neste ponto é porque ele já parou de vez. Acabaram as IAs: chama gente.
       if (t === 'authentication_error' || t === 'permission_error' || t === 'billing_error') {
-        if (GEMINI_KEY) {
-          try { console.log('↪️ IA fallback: Claude indisponível, usando Gemini'); return await geminiLoop(system, tools, history, exec, maxIter) }
-          catch (e) { console.error('gemini fallback falhou:', e.message) }
-        }
         return { text: 'Nosso atendimento automático deu uma pausa aqui 😔 Já chamei um *atendente humano* pra continuar com você — só um instante! 🙏', followups, _handoff: true }
       }
       return { text: 'Tive um problema aqui, pode repetir? 🙏', followups }
@@ -433,7 +462,17 @@ async function geminiLoop(system, tools, history, exec, maxIter = 5) {
     // Gemini sobrecarregado (503) engolia a mensagem em silêncio (visto 05/08: reserva da Sabrina
     // nunca foi criada, sem link, sem aviso) — RETRY com backoff antes de desistir; se mesmo assim
     // falhar, devolve texto pro cliente em vez de estourar exceção (o catch do webhook só logava).
-    let data
+    // 24/08: 429 do Gemini vinha em DUAS naturezas e o codigo tratava as duas igual.
+    // "monthly spending cap" / "prepayment credits are depleted" NUNCA melhora sozinho —
+    // retentar 3x so atrasa, e a resposta "manda de novo" convida o cliente a insistir
+    // contra a parede (sabado 22/08: 113 mensagens dessas pra 21 clientes; um levou 16).
+    const ehPermanente = (err) => {
+      if (!err) return false
+      const m = String(err.message || '')
+      return err.code === 403
+        || /spending cap|credits are depleted|API key not valid|API_KEY_INVALID|PERMISSION_DENIED|is disabled|has not been used/i.test(m)
+    }
+    let data, permanente = false
     for (let tent = 0; tent < 3; tent++) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -442,13 +481,18 @@ async function geminiLoop(system, tools, history, exec, maxIter = 5) {
       }).catch((e) => ({ __neterro: e }))
       if (res.__neterro) { data = { error: { code: 'network', message: res.__neterro.message } } }
       else data = await res.json()
-      const retryable = data.error && (data.error.code === 503 || data.error.code === 'network' || data.error.code === 429)
+      permanente = ehPermanente(data.error)
+      const retryable = data.error && !permanente && (data.error.code === 503 || data.error.code === 'network' || data.error.code === 429)
       if (!retryable) break
       console.error(`gemini retry ${tent + 1}/3:`, data.error.code, String(data.error.message).slice(0, 120))
       if (tent < 2) await sleep(1500 * (tent + 1))
     }
     if (data.error) {
-      console.error('gemini falhou após retries:', JSON.stringify(data.error).slice(0, 200))
+      console.error(`gemini falhou${permanente ? ' (PERMANENTE)' : ' após retries'}:`, JSON.stringify(data.error).slice(0, 200))
+      // permanente = as duas IAs cairam (Claude ja tinha falhado pra chegar aqui):
+      // chama gente de verdade e avisa o gerente, em vez de pedir pro cliente repetir.
+      // _permanente avisa o chamador que o Gemini parou de vez — é o gatilho do plano B.
+      if (permanente) return { text: 'Nosso atendimento automático deu uma pausa aqui 😔 Já chamei um *atendente humano* pra continuar com você — só um instante! 🙏', followups, _handoff: true, _permanente: true }
       return { text: 'Desculpa, tive uma instabilidade técnica agora 🙏 Pode mandar sua última mensagem de novo?', followups }
     }
     const parts = data.candidates?.[0]?.content?.parts || []
@@ -544,6 +588,17 @@ async function enviarPdfCardapio(casa, from) {
   await enviarDocumento(from, cc.cardapio_url, 'Cardapio-Botequim.pdf', '📜 Aqui está o nosso cardápio completo! Ficou com alguma dúvida? 😊')
   return true
 }
+// Lucas 27/08: o PDF mora no mesmo site do cardápio (reservas.plionai.com.br).
+// O pacote é do GRUPO, igual pras 4 casas — por isso é URL fixa e não coluna por
+// casa: não depende de ninguém cadastrar nada pra entrar no ar em todas.
+const PDF_FIM_DE_ANO = 'https://reservas.plionai.com.br/pacote-fim-de-ano-2026.pdf'
+async function enviarPdfFimDeAno(casa, from) {
+  try {
+    await enviarDocumento(from, PDF_FIM_DE_ANO, 'Botequim-Festas-de-Fim-de-Ano.pdf', '🎄 Aqui estão os nossos *pacotes de fim de ano*! Dá uma olhada nos três planos 👇')
+    return true
+  } catch (e) { console.error('pdf fim de ano', e.message); return false }
+}
+
 async function calcularEntrega(casa, from, endereco) {
   const cfg = (await sb.from('delivery_config').select('*').eq('casa_id', casa.id).maybeSingle()).data
   if (!cfg) return { atende: false, motivo: 'Delivery não configurado.' }
@@ -1271,7 +1326,7 @@ async function processarMensagem(body) {
       const reply = await runDeliveryAgent(casa, from, hist)
       if (reply.text) { hist.push({ role: 'assistant', content: reply.text }); await sendText(from, reply.text) }
       await upConversa(casa.id, from, { historico: hist })
-      if (reply._handoff) { await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true }); await avisarGerente(casa, from, 'precisa de atendimento (IA do robô fora do ar — chave da Anthropic)') }
+      if (reply._handoff) { await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true }); await avisarGerente(casa, from, 'precisa de atendimento (IA do robô fora do ar)') }
       return
     }
 
@@ -1328,7 +1383,7 @@ async function processarMensagem(body) {
     if (reply.text) { history.push({ role: 'assistant', content: reply.text }); await sendText(from, reply.text) }
     for (const fu of reply.followups ?? []) { await sendText(from, fu); history.push({ role: 'assistant', content: fu }) }
     await upConversa(casa.id, from, { historico: history })
-    if (reply._handoff) { await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true }); await avisarGerente(casa, from, 'precisa de atendimento (IA do robô fora do ar — chave da Anthropic)') }
+    if (reply._handoff) { await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true }); await avisarGerente(casa, from, 'precisa de atendimento (IA do robô fora do ar)') }
   }
 }
 
