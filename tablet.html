@@ -691,15 +691,25 @@ function abrirQr(ix){
   if(qrPoll)clearInterval(qrPoll);
   qrPoll=setInterval(checarConexao,5000);
 }
+// 27/08: o chip fica desligado até alguém pedir. Abrir esta tela JÁ é o pedido —
+// o escritório abre uma janela de 5 min de QR contínuo. Enquanto o QR não chega,
+// a tela busca sozinha a cada 3s: antes o texto mandava ficar tocando "Gerar novo
+// QR" e a pessoa desistia achando que estava quebrado.
+let qrBusca=null;
 async function gerarQr(force){
   try{
     const r=await robo('POST','/painel/qr',{casa_id:qrCasaId,force:!!force});
     if(r.conectado){ conectou(r.numero); return; }
-    if(!r.ok){ document.getElementById('qrStatus').textContent='⚠️ '+(r.erro||'Erro ao gerar o QR.'); return; }
+    if(!r.ok){
+      document.getElementById('qrStatus').textContent='⏳ '+(r.erro||'Erro ao gerar o QR.');
+      if(r.aguarde&&!qrBusca) qrBusca=setInterval(function(){gerarQr(false)},3000);
+      return;
+    }
+    if(qrBusca){ clearInterval(qrBusca); qrBusca=null; }
     const img=document.getElementById('qrImg');
     img.src=r.qr.indexOf('data:')===0?r.qr:'data:image/png;base64,'+r.qr;
     img.style.display='inline-block';
-    document.getElementById('qrStatus').textContent='📱 No celular da unidade: WhatsApp > Aparelhos conectados > Conectar um aparelho. O QR expira rápido — se der erro, toque em "Gerar novo QR".';
+    document.getElementById('qrStatus').textContent='📱 No celular DESTA unidade: WhatsApp > Aparelhos conectados > Conectar um aparelho. O QR se renova sozinho por 5 minutos — não precisa tocar em nada.';
   }catch(e){ document.getElementById('qrStatus').textContent='⚠️ '+e.message; }
 }
 async function checarConexao(){
@@ -715,7 +725,7 @@ function conectou(numero){
   document.getElementById('qrStatus').textContent='✅ Conectado!'+(numero?' Número: '+numero+'.':'')+' O robô já atende esta unidade.';
   loadWpp();
 }
-function fecharQr(){ if(qrPoll){clearInterval(qrPoll);qrPoll=null;} document.getElementById('qrOverlay').classList.add('hidden'); }
+function fecharQr(){ if(qrPoll){clearInterval(qrPoll);qrPoll=null;} if(qrBusca){clearInterval(qrBusca);qrBusca=null;} document.getElementById('qrOverlay').classList.add('hidden'); }
 let convFiltro='todas', convAtual=null, convPoll=null, atendPoll=null;
 
 // Estilo WhatsApp Web (pedido Giovana 24/07): a lista vem da EVOLUTION (todas as conversas do celular,
