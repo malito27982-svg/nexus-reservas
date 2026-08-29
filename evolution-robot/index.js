@@ -1055,7 +1055,20 @@ app.get('/debug/lembretes', async (req, res) => {
 })
 
 // ===================== WEBHOOK =====================
-function extrairTexto(m) { m = m || {}; return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '' }
+// 28/08: mensagem TEMPORÁRIA (some em 24h/7d/90d) vem embrulhada em
+// ephemeralMessage — e o mesmo vale pro "ver uma vez", documento com legenda e
+// mensagem editada. Sem abrir o embrulho o texto some e a foto deixa de ser foto:
+// o robô respondia "Por enquanto eu entendo texto, áudio e fotos" logo depois de
+// dizer que entende fotos, e a mensagem do cliente se perdia (visto na Washington
+// Luís 28/08 e em várias conversas que registraram só "[mensagem]").
+function desembrulhar(m, n = 0) {
+  if (!m || n > 4) return m || {}
+  const dentro = m.ephemeralMessage?.message || m.viewOnceMessage?.message
+    || m.viewOnceMessageV2?.message || m.viewOnceMessageV2Extension?.message
+    || m.documentWithCaptionMessage?.message || m.editedMessage?.message
+  return dentro ? desembrulhar(dentro, n + 1) : m
+}
+function extrairTexto(m) { m = desembrulhar(m); return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '' }
 
 // dedup: a Evolution pode reentregar o MESMO messages.upsert (retry/append) e o robô respondia 2x (QA Giovana 24/07)
 const _seenMsg = new Map()
@@ -1131,7 +1144,7 @@ async function processarMensagem(body) {
     if (jid.endsWith('@g.us')) return
     if (jaProcessada(key.id)) { console.log('↩️ msg duplicada ignorada', key.id); return }
     const from = jid.split('@')[0]
-    const mm = d.message || {}
+    const mm = desembrulhar(d.message) // abre embrulho de temporária/ver-uma-vez antes de olhar o tipo
     const isImage = !!mm.imageMessage
     const isAudio = !!mm.audioMessage
     const isSticker = !!mm.stickerMessage
@@ -1214,7 +1227,16 @@ async function processarMensagem(body) {
       await gerarEnviarFlyer(casa, from, foto, conv.flyer_ctx, conv.flyer_ocasiao); return
     }
     if (isImage) { await sendText(from, 'Recebi sua foto 🙂 Me conta por texto: pra quantas pessoas, que dia e horário?'); return }
-    if (!texto.trim()) { await sendText(from, 'Por enquanto eu entendo texto, áudio e fotos 🙂'); return }
+    // 28/08: sobrou algum tipo que eu não leio (vídeo, documento, contato, local,
+    // enquete). A resposta antiga era "Por enquanto eu entendo texto, áudio e
+    // fotos" e o cliente ficava sem saber o que fazer — vários abandonaram a
+    // conversa aí. Agora diz o que fazer e puxa a reserva de volta.
+    if (!texto.trim()) {
+      const tipo = Object.keys(mm)[0] || ''
+      const nome = { videoMessage: 'vídeo', documentMessage: 'arquivo', contactMessage: 'contato', contactsArrayMessage: 'contato', locationMessage: 'localização', liveLocationMessage: 'localização', pollCreationMessage: 'enquete' }[tipo]
+      await sendText(from, `${nome ? `Recebi seu ${nome}, mas aqui eu leio só texto, áudio e foto` : 'Não consegui abrir o que você mandou'} 🙈 Me escreve por texto ou manda um *áudio* que eu resolvo na hora! Pra reserva eu preciso de: *nome*, *quantas pessoas*, *dia* e *horário*.`)
+      return
+    }
 
     // saudação isolada SEMPRE reseta a conversa — roda ANTES de qualquer fluxo pendente (flyer/delivery/velho histórico).
     // Cliente com reserva FUTURA (QA Giovana 24/07): em vez do menu genérico, abre reconhecendo a reserva
