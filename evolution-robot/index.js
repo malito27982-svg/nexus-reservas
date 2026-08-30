@@ -199,18 +199,39 @@ function setoresBloqueados(dia) {
     .filter(Boolean)
 }
 
+// 30/08 (Lucas): "pode falar que o máximo é 6, mas depois que tiver duas reservas,
+// só falar que é no máximo 4". A Área Kids de SBC tem mesas de 4 e DUAS mesas de
+// 6 (as 45 e 46) — quando as duas já estão reservadas, o setor volta a comportar
+// no máximo 4. O cadastro só sabia de um número fixo por setor: com 4 o robô
+// nunca vendia as mesas grandes, com 6 ele vendia mesa que não existe.
+// A regra mora na `descricao` do setor (campo livre, aparece no painel):
+//     MESAS GRANDES: 2 ate 6
+// Lê-se: além do máximo normal do setor, existem 2 mesas que vão até 6 pessoas.
+function mesasGrandes(descricao) {
+  const m = String(descricao || '').match(/MESAS\s+GRANDES\s*:\s*(\d+)\s*(?:at[ée]|de至|de)\s*(\d+)/i)
+  return m ? { qtd: Number(m[1]), ate: Number(m[2]) } : null
+}
+// teto REAL do setor pra um grupo desse tamanho, na data pedida
+function tetoDoSetor(amb, reservasDia, pessoas) {
+  const maxNormal = amb.capacidade_max_reserva ?? amb.limite_pessoas
+  const mg = mesasGrandes(amb.descricao)
+  if (!mg || pessoas <= maxNormal || pessoas > mg.ate) return maxNormal
+  const jaGrandes = reservasDia.filter((r) => r.ambiente_id === amb.id && (r.qtd_pessoas || 0) > maxNormal).length
+  return jaGrandes < mg.qtd ? mg.ate : maxNormal // acabaram as mesas grandes do dia
+}
+
 async function consultarDisponibilidade(casa, input) {
   const { data, pessoas } = input
   const dow = new Date(data + 'T12:00:00Z').getUTCDay()
   const dia = (await sb.from('dias_reserva').select('status,informacoes').eq('casa_id', casa.id).eq('data', data).maybeSingle()).data
   if (dia && dia.status !== 'aberto') return { aberto: false, motivo: `Dia ${dia.status}.` }
   const bloqueados = setoresBloqueados(dia)
-  const ambientes = (await sb.from('ambientes').select('id,nome,limite_pessoas,capacidade_min_reserva,capacidade_max_reserva,dias_semana').eq('casa_id', casa.id).eq('ativo', true).eq('reserva_online', true).order('ordem')).data ?? []
+  const ambientes = (await sb.from('ambientes').select('id,nome,descricao,limite_pessoas,capacidade_min_reserva,capacidade_max_reserva,dias_semana').eq('casa_id', casa.id).eq('ativo', true).eq('reserva_online', true).order('ordem')).data ?? []
   const reservasDia = (await sb.from('reservas').select('ambiente_id,qtd_pessoas').eq('casa_id', casa.id).eq('data', data).in('status', ['pendente', 'confirmada', 'checkin', 'concluido'])).data ?? []
   const setores = ambientes
     .filter((a) => !bloqueados.includes(String(a.nome).trim().toLowerCase()))
     .filter((a) => !a.dias_semana || a.dias_semana.length === 0 || a.dias_semana.includes(dow))
-    .filter((a) => pessoas >= a.capacidade_min_reserva && pessoas <= (a.capacidade_max_reserva ?? a.limite_pessoas))
+    .filter((a) => pessoas >= a.capacidade_min_reserva && pessoas <= tetoDoSetor(a, reservasDia, pessoas))
     .map((a) => { const ocup = reservasDia.filter((r) => r.ambiente_id === a.id).reduce((s, r) => s + (r.qtd_pessoas || 0), 0); return { setor: a.nome, vagas: Math.max(0, a.limite_pessoas - ocup) } })
     .filter((s) => s.vagas >= pessoas)
   const girosAll = (await sb.from('giros').select('horario_min,horario_max,intervalo_min,fechamento_antecipado,dias_semana,somente_ambiente').eq('casa_id', casa.id).eq('ativo', true)).data ?? []
@@ -262,6 +283,14 @@ async function criarReserva(casa, from, input) {
     const diaR = (await sb.from('dias_reserva').select('informacoes').eq('casa_id', casa.id).eq('data', data).maybeSingle()).data
     if (setoresBloqueados(diaR).includes(String(amb.nome).trim().toLowerCase())) {
       return { ok: false, setor_fechado: true, erro: `O setor ${amb.nome} está SEM RESERVA nesta data (lotado). NÃO insista nele: peça desculpas rapidinho, ofereça os OUTROS setores da casa com consultar_disponibilidade e siga a reserva normalmente.` }
+    }
+    // mesas grandes acabaram? o teto tem que ser recontado AQUI: entre a consulta
+    // e o "pode confirmar" do cliente, outra pessoa pode ter fechado a última.
+    const cheio = (await sb.from('ambientes').select('id,descricao,limite_pessoas,capacidade_max_reserva').eq('id', amb.id).maybeSingle()).data
+    const resDia = (await sb.from('reservas').select('ambiente_id,qtd_pessoas').eq('casa_id', casa.id).eq('data', data).in('status', ['pendente', 'confirmada', 'checkin', 'concluido'])).data ?? []
+    const teto = tetoDoSetor(cheio || amb, resDia, pessoas)
+    if (pessoas > teto) {
+      return { ok: false, setor_cheio: true, erro: `No ${amb.nome}, nesta data, só dá pra acomodar até ${teto} pessoas por reserva (as mesas maiores já estão reservadas). NÃO confirme: ofereça outro setor com consultar_disponibilidade.` }
     }
   }
   const cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null
