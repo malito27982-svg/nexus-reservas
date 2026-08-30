@@ -182,14 +182,33 @@ function gerarHorarios(giros) {
   }
   return out
 }
+// 30/08 (Lucas): "em São Bernardo, só fala que não pode fazer reserva no deck no
+// sábado que vem, e oferece outro lugar da casa". Não existia jeito de fechar UM
+// setor em UM dia: dias_reserva fecha o dia inteiro e ambientes.dias_semana vale
+// toda semana. O deck estava lotado (150 pessoas fechadas por fora, que não estão
+// no sistema — por isso a conta de lotação não segurava sozinha).
+// Enquanto não dá pra criar tabela nova no banco, a marcação mora no campo
+// `informacoes` do dia, uma linha por setor:  SEM RESERVA: Salão Deck
+// Fica visível pra equipe no painel do dia e some quando apagam a linha. Quando
+// eu tiver acesso pra criar tabela, isto vira uma tabela de verdade.
+function setoresBloqueados(dia) {
+  return String(dia?.informacoes || '')
+    .split('\n')
+    .filter((l) => /^\s*SEM[\s_]RESERVA\s*:/i.test(l))
+    .map((l) => l.replace(/^\s*SEM[\s_]RESERVA\s*:/i, '').trim().toLowerCase())
+    .filter(Boolean)
+}
+
 async function consultarDisponibilidade(casa, input) {
   const { data, pessoas } = input
   const dow = new Date(data + 'T12:00:00Z').getUTCDay()
-  const dia = (await sb.from('dias_reserva').select('status').eq('casa_id', casa.id).eq('data', data).maybeSingle()).data
+  const dia = (await sb.from('dias_reserva').select('status,informacoes').eq('casa_id', casa.id).eq('data', data).maybeSingle()).data
   if (dia && dia.status !== 'aberto') return { aberto: false, motivo: `Dia ${dia.status}.` }
+  const bloqueados = setoresBloqueados(dia)
   const ambientes = (await sb.from('ambientes').select('id,nome,limite_pessoas,capacidade_min_reserva,capacidade_max_reserva,dias_semana').eq('casa_id', casa.id).eq('ativo', true).eq('reserva_online', true).order('ordem')).data ?? []
   const reservasDia = (await sb.from('reservas').select('ambiente_id,qtd_pessoas').eq('casa_id', casa.id).eq('data', data).in('status', ['pendente', 'confirmada', 'checkin', 'concluido'])).data ?? []
   const setores = ambientes
+    .filter((a) => !bloqueados.includes(String(a.nome).trim().toLowerCase()))
     .filter((a) => !a.dias_semana || a.dias_semana.length === 0 || a.dias_semana.includes(dow))
     .filter((a) => pessoas >= a.capacidade_min_reserva && pessoas <= (a.capacidade_max_reserva ?? a.limite_pessoas))
     .map((a) => { const ocup = reservasDia.filter((r) => r.ambiente_id === a.id).reduce((s, r) => s + (r.qtd_pessoas || 0), 0); return { setor: a.nome, vagas: Math.max(0, a.limite_pessoas - ocup) } })
@@ -236,6 +255,15 @@ async function criarReserva(casa, from, input) {
   if (!cands.length) cands = (await sb.from('ambientes').select('id,nome,dias_semana').eq('casa_id', casa.id).eq('ativo', true).ilike('nome', `%${setor}%`)).data ?? []
   const amb = cands.find((a) => Array.isArray(a.dias_semana) && a.dias_semana.includes(dowR)) ?? cands.find((a) => !a.dias_semana || !a.dias_semana.length)
   if (!amb) return { ok: false, erro: `Setor "${setor}" não encontrado${cands.length ? ' para esse dia da semana' : ''}.` }
+  // 30/08: trava também aqui, não só na consulta. Sem isto o robô ainda GRAVA a
+  // reserva se o cliente insistir no nome do setor fechado, e a casa só descobre
+  // no dia. A checagem tem que ficar do lado de quem escreve no banco.
+  {
+    const diaR = (await sb.from('dias_reserva').select('informacoes').eq('casa_id', casa.id).eq('data', data).maybeSingle()).data
+    if (setoresBloqueados(diaR).includes(String(amb.nome).trim().toLowerCase())) {
+      return { ok: false, setor_fechado: true, erro: `O setor ${amb.nome} está SEM RESERVA nesta data (lotado). NÃO insista nele: peça desculpas rapidinho, ofereça os OUTROS setores da casa com consultar_disponibilidade e siga a reserva normalmente.` }
+    }
+  }
   const cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null
   const up = await sb.from('clientes').upsert({ casa_id: casa.id, nome, telefone: from, cpf: cpfLimpo, email: email ?? null, data_nascimento: nascimento ?? null }, { onConflict: 'casa_id,telefone' }).select('id').single()
   const ins = await sb.from('reservas').insert({ casa_id: casa.id, cliente_id: up.data?.id ?? null, nome, telefone: from, cpf: cpfLimpo, email: email ?? null, data_nascimento: nascimento ?? null, data, hora: hora ?? null, ambiente_id: amb.id, qtd_pessoas: pessoas, confirmacoes_necessarias: pessoas, origem: 'whatsapp', status: 'confirmada', confirmada_em: new Date().toISOString() }).select('token').single()
