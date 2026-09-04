@@ -1286,7 +1286,23 @@ async function processarMensagem(body) {
       if (!foto) { await sendText(from, 'Não consegui baixar a foto, manda de novo? 🙏'); return }
       await gerarEnviarFlyer(casa, from, foto, conv.flyer_ctx, conv.flyer_ocasiao); return
     }
-    if (isImage) { await sendText(from, 'Recebi sua foto 🙂 Me conta por texto: pra quantas pessoas, que dia e horário?'); return }
+    // 04/09 (Lucas — cliente apanhou a MESMA resposta ~30x seguidas e bloqueou o número):
+    // antes de repetir a msg de "não sei ler isso", checa se a ÚLTIMA coisa que o robô já
+    // mandou pra esse número foi exatamente esse tipo de aviso. Se foi, já era — parar de
+    // repetir feito papagaio e chamar atendente de verdade.
+    async function midiaNaoEntendida(msgPadrao) {
+      const inst9 = body.instance || INSTANCE
+      const ult = (await sb.from('wa_mensagens').select('texto').eq('instance', inst9).eq('numero', from).eq('minha', true).order('ts', { ascending: false }).limit(1).maybeSingle()).data
+      const jaAvisou = ult?.texto && (ult.texto.includes('não leio') || ult.texto.includes('Não consegui abrir') || ult.texto.includes('Recebi sua foto'))
+      if (jaAvisou) {
+        await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
+        await sendText(from, `Vou te passar direto pra um atendente pra te ajudar melhor 🙏\n\n${await avisoAtendimentoHumano(casa.id)}`)
+        await avisarGerente(casa, from, 'mandou várias mídias que o robô não consegue ler — já avisou 2x e não resolveu, transferido')
+        return
+      }
+      await sendText(from, msgPadrao)
+    }
+    if (isImage) { await midiaNaoEntendida('Recebi sua foto 🙂 Me conta por texto: pra quantas pessoas, que dia e horário?'); return }
     // 28/08: sobrou algum tipo que eu não leio (vídeo, documento, contato, local,
     // enquete). A resposta antiga era "Por enquanto eu entendo texto, áudio e
     // fotos" e o cliente ficava sem saber o que fazer — vários abandonaram a
@@ -1294,7 +1310,7 @@ async function processarMensagem(body) {
     if (!texto.trim()) {
       const tipo = Object.keys(mm)[0] || ''
       const nome = { videoMessage: 'vídeo', documentMessage: 'arquivo', contactMessage: 'contato', contactsArrayMessage: 'contato', locationMessage: 'localização', liveLocationMessage: 'localização', pollCreationMessage: 'enquete' }[tipo]
-      await sendText(from, `${nome ? `Recebi seu ${nome}, mas aqui eu leio só texto, áudio e foto` : 'Não consegui abrir o que você mandou'} 🙈 Me escreve por texto ou manda um *áudio* que eu resolvo na hora! Pra reserva eu preciso de: *nome*, *quantas pessoas*, *dia* e *horário*.`)
+      await midiaNaoEntendida(`${nome ? `Recebi seu ${nome}, mas aqui eu leio só texto, áudio e foto` : 'Não consegui abrir o que você mandou'} 🙈 Me escreve por texto ou manda um *áudio* que eu resolvo na hora! Pra reserva eu preciso de: *nome*, *quantas pessoas*, *dia* e *horário*.`)
       return
     }
 
