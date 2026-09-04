@@ -62,7 +62,7 @@ async function enfileirar(tipo, numero, payload) {
   const { error } = await sb.from('rv_fila').insert({ instance: curInst(), tipo, numero: num, payload })
   if (error) { lastEvoErr = { status: 500, body: error.message }; console.error(`  ⚠️ fila ${tipo}`, error.message); return null }
   lastEvoErr = null
-  logMensagem(curInst(), num, true, payload.text || payload.caption || `[${tipo}]`)
+  logMensagem(curInst(), num, true, payload.text || payload.caption || (tipo === 'reacao' ? `[reação ${payload.emoji || '👍'}]` : `[${tipo}]`))
   return { queued: true }
 }
 async function sendText(numero, texto) {
