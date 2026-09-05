@@ -1085,8 +1085,11 @@ async function sweepLembretes() {
         if (ok) { await sb.from('reservas').update({ lembrete_1h: new Date().toISOString() }).eq('id', r.id); acoes.push(`1h:${r.id}`) }
         else if (numSemWhatsApp()) { await sb.from('reservas').update({ lembrete_1h: new Date().toISOString() }).eq('id', r.id); acoes.push(`1h-semwpp:${r.id}`) }
       } else if (horasAte <= 24 && horasAte > 1.5 && !r.lembrete_24h) {
-        // reserva recém-criada não precisa de lembrete (a pessoa acabou de reservar)
-        if (r.created_at && agora - new Date(r.created_at).getTime() < 2 * 3600000) continue
+        // reserva recém-criada não precisa de lembrete (a pessoa acabou de reservar).
+        // 04/09 (Lucas — cliente que levou 1h20 confirmando pelo chat normal recebeu o
+        // lembrete pedindo confirmação de novo, 2h02 depois de criada — "De novo? Já
+        // confirmei tudo. Chega!"): 2h era curto demais pra uma conversa real de reserva.
+        if (r.created_at && agora - new Date(r.created_at).getTime() < 6 * 3600000) continue
         const ok = await als.run({ inst }, () => sendText(r.telefone, `Olá, ${r.nome}! 👋 Passando pra lembrar da sua reserva no *${casa.nome}*: *${dataTxt} às ${horaTxt}* — ${r.qtd_pessoas} pessoas.${evento}\n\nPosso *confirmar sua presença*? Responda *SIM* pra confirmar ou *NÃO* pra cancelar. 🍻`))
         if (ok) {
           await sb.from('reservas').update({ lembrete_24h: new Date().toISOString() }).eq('id', r.id)
@@ -1293,13 +1296,17 @@ async function processarMensagem(body) {
       await gerarEnviarFlyer(casa, from, foto, conv.flyer_ctx, conv.flyer_ocasiao); return
     }
     // 04/09 (Lucas — cliente apanhou a MESMA resposta ~30x seguidas e bloqueou o número):
-    // antes de repetir a msg de "não sei ler isso", checa se a ÚLTIMA coisa que o robô já
-    // mandou pra esse número foi exatamente esse tipo de aviso. Se foi, já era — parar de
-    // repetir feito papagaio e chamar atendente de verdade.
+    // antes de repetir a msg de "não sei ler isso", checa se o robô JÁ mandou esse mesmo
+    // aviso pra esse número nos últimos 15 min. 1ª correção só olhava a ÚLTIMA mensagem —
+    // não bastou: cliente real (Rosana, 05/09) mandava media ilegível, recebia o aviso,
+    // mandava um TEXTO normal no meio (quebrando a checagem de "foi a última mesma"), e a
+    // PRÓXIMA media ilegível repetia o aviso de novo — 8 avisos intercalados, ela reclamou.
+    // Agora conta quantas vezes esse aviso já saiu na janela, texto no meio não reseta nada.
     async function midiaNaoEntendida(msgPadrao) {
       const inst9 = body.instance || INSTANCE
-      const ult = (await sb.from('wa_mensagens').select('texto').eq('instance', inst9).eq('numero', from).eq('minha', true).order('ts', { ascending: false }).limit(1).maybeSingle()).data
-      const jaAvisou = ult?.texto && (ult.texto.includes('não leio') || ult.texto.includes('Não consegui abrir') || ult.texto.includes('Recebi sua foto'))
+      const desde = new Date(Date.now() - 15 * 60 * 1000).toISOString()
+      const recentes = (await sb.from('wa_mensagens').select('texto').eq('instance', inst9).eq('numero', from).eq('minha', true).gte('ts', desde).order('ts', { ascending: false }).limit(20)).data ?? []
+      const jaAvisou = recentes.some((m) => m.texto && (m.texto.includes('não leio') || m.texto.includes('Não consegui abrir') || m.texto.includes('Recebi sua foto')))
       if (jaAvisou) {
         await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
         await sendText(from, `Vou te passar direto pra um atendente pra te ajudar melhor 🙏\n\n${await avisoAtendimentoHumano(casa.id)}`)
