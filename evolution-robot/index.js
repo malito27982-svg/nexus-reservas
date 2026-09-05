@@ -1059,6 +1059,12 @@ async function sweepLembretes() {
     const rs = (await sb.from('reservas').select('id,casa_id,nome,telefone,data,hora,qtd_pessoas,ambiente_id,lembrete_24h,lembrete_1h,created_at').in('status', ['pendente', 'confirmada']).gte('data', hojeISO).lte('data', amanhaISO)).data ?? []
     for (const r of rs) {
       if (!r.hora || !r.telefone) continue
+      // 04/09 (Lucas — cliente respondia SIM/NÃO no lembrete e o robô ignorava, tratando
+      // como conversa nova): reserva feita na mão às vezes grava o telefone SEM o 55 na
+      // frente. sendText() já normaliza pra ENVIAR certo, mas gravava o estado "aguardando
+      // confirmação" na linha de conversa do número SEM 55 — enquanto a conversa de verdade
+      // (que chega da Baileys) é sempre COM 55. Resultado: a confirmação nunca era vista.
+      r.telefone = normNum(r.telefone)
       // horário do bar = America/Sao_Paulo (UTC-3 fixo, sem horário de verão desde 2019)
       const quando = new Date(`${r.data}T${String(r.hora).slice(0, 8)}-03:00`).getTime()
       const horasAte = (quando - agora) / 3600000
