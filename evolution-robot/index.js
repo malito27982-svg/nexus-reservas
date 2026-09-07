@@ -265,7 +265,15 @@ async function criarReserva(casa, from, input) {
     await upConversa(casa.id, from, { handoff: true, handoff_aguardando: true })
     await sendText(from, `Que ótimo, um grupo grande! 🎉 Como é bastante gente, fazemos um *atendimento personalizado*. O responsável do *${casa.nome}* já vai falar com você por aqui. 🙌\n\n${await avisoAtendimentoHumano(casa.id)}`)
     await avisarGerente(casa, from, `quer reservar para ${pessoas} pessoas (GRUPO GRANDE +49)`)
-    return { ok: false, grupo_grande: true, mensagem: 'Handoff grupo grande. NÃO confirme.' }
+    // 06/09 (Lucas — grupo de 73 pessoas ficou de fora do sistema, só o aviso pro
+    // gerente no WhatsApp; a equipe quase não achou a tempo, cliente reclamou no Google):
+    // handoff de grupo grande agora TAMBÉM entra na lista de reservas do dia, como
+    // PENDENTE — assim ela aparece no painel/tablet mesmo se a mensagem do gerente
+    // passar batido, e some da lista de "sumiu" que ninguém vê.
+    try {
+      await sb.from('reservas').insert({ casa_id: casa.id, nome: `${nome} — GRUPO GRANDE, confirmar com o cliente`, telefone: from, data, hora: hora ?? null, qtd_pessoas: pessoas, origem: 'whatsapp', status: 'pendente', observacao: 'Handoff automático (+49 pessoas) — atendente precisa fechar os detalhes e confirmar/cancelar.' })
+    } catch (e) { console.error('placeholder grupo grande:', e.message) }
+    return { ok: false, grupo_grande: true, mensagem: 'Handoff grupo grande. NÃO confirme. Uma reserva PENDENTE já foi criada no sistema pro atendente finalizar — não precisa avisar disso ao cliente.' }
   }
   // anti-duplicata (link duplo visto 24/07): mesma pessoa + mesma data com reserva ativa = NÃO cria outra
   const dup = (await sb.from('reservas').select('id,token,hora,qtd_pessoas').eq('casa_id', casa.id).eq('telefone', from).eq('data', data).in('status', ['pendente', 'confirmada']).limit(1).maybeSingle()).data
@@ -1080,6 +1088,13 @@ async function sweepLembretes() {
         const exp = exps.find((e) => e.divulgar && ((e.data && e.data === r.data) || (!e.data && Array.isArray(e.dias_semana) && e.dias_semana.includes(dowL))))
         if (exp) evento = `\n\n🎶 E tem mais: *${exp.titulo}* nesse dia!`
       } catch (_) {}
+      // 06/09 (Lucas — print da equipe: "ele transfere a conversa pra gente e fica
+      // respondendo em cima, sem devolver"): o sweep mandava lembrete automático mesmo
+      // com o cliente em atendimento humano ativo, interrompendo a conversa do
+      // atendente do nada. Pula o lembrete (tenta de novo no próximo ciclo) enquanto
+      // handoff estiver ligado.
+      const emHandoff = (await sb.from('conversas').select('handoff').eq('casa_id', r.casa_id).eq('telefone', r.telefone).maybeSingle()).data?.handoff
+      if (emHandoff) continue
       if (horasAte <= 1.05 && !r.lembrete_1h) {
         const ok = await als.run({ inst }, () => sendText(r.telefone, `⏰ Falta pouco, ${r.nome}! Sua mesa no *${casa.nome}* está garantida hoje às *${horaTxt}* (${r.qtd_pessoas} pessoas).${evento} Até já! 🍻`))
         if (ok) { await sb.from('reservas').update({ lembrete_1h: new Date().toISOString() }).eq('id', r.id); acoes.push(`1h:${r.id}`) }
